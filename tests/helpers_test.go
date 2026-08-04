@@ -81,3 +81,17 @@ func testDB(t *testing.T) *pg.DB {
 	})
 	return db
 }
+
+// createUser @notice Inserts a verified user row directly and returns its id.
+//
+// @dev A fixture, deliberately not the registration flow — these tests isolate the layer under
+// test, and registration has its own.
+func createUser(t *testing.T, db *pg.DB, email string) string {
+	t.Helper()
+	var id string
+	if _, err := db.QueryOne(pg.Scan(&id),
+		`insert into auth_users (email, email_verified) values (?, true) returning id`, email); err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
