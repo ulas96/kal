@@ -67,6 +67,16 @@ jobs:
         env:
           DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable
 
+      - name: confirm the DB-backed tests actually ran
+        run: |
+          go test -v -count=1 ./tests/ | tee out.txt
+          grep -q -- '--- PASS: TestDB' out.txt \
+            || { echo "::error::no TestDB* test passed — they skipped, and a skip reads as ok"; exit 1; }
+          ! grep -q -- '--- SKIP: TestDB' out.txt \
+            || { echo "::error::a TestDB* test skipped despite the service container"; exit 1; }
+        env:
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable
+
   lint:
     name: lint
     runs-on: ubuntu-latest
