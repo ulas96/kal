@@ -50,7 +50,7 @@ func Cookie(name, token string) *http.Cookie {
 // @param name the cookie name to delete
 // @return *http.Cookie with MaxAge -1
 func ClearCookie(name string) *http.Cookie {
-	c := Cookie(name, "")
+	c := Cookie(name, "") // #nosec G124 -- Secure/HttpOnly/SameSite all come from Cookie
 	c.MaxAge = -1
 	return c
 }
