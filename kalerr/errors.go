@@ -36,7 +36,7 @@ const (
 	// CodeForbidden @notice A principal, without the right.
 	CodeForbidden = "FORBIDDEN"
 	// CodeInvalidCredentials @notice Login failed. Deliberately unspecific; see above.
-	CodeInvalidCredentials = "INVALID_CREDENTIALS"
+	CodeInvalidCredentials = "INVALID_CREDENTIALS" // #nosec G101 -- an error code on the wire, not a credential
 	// CodeRateLimited @notice The backoff window or the hashing bound rejected the attempt.
 	CodeRateLimited = "RATE_LIMITED"
 	// CodeMFARequired @notice Step-up required. Fails closed when no MFA module is installed.
