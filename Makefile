@@ -39,6 +39,10 @@ cover:
 # An auth library that does not scan its own dependency graph is asking every consumer to do it
 # instead (luima's security review calls the missing gate B-01). Pinned to @latest deliberately:
 # a vulnerability scanner frozen at an old version stops knowing about new vulnerabilities.
+#
+# govulncheck also reports standard-library vulnerabilities against the toolchain that built the
+# code, so this fails on an out-of-date local Go even when kal and its dependencies are clean.
+# That is the tool working: upgrade Go rather than suppressing it.
 audit:
 	go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 	go run github.com/securego/gosec/v2/cmd/gosec@latest -quiet ./...

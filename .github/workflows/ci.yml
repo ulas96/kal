@@ -97,6 +97,11 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version: '1.26'
+          # check-latest matters here specifically: govulncheck reports standard-library
+          # vulnerabilities against the toolchain that built the code, so a stale minor
+          # version fails this job for reasons that have nothing to do with kal — and the
+          # honest fix is the patched toolchain, not a suppression.
+          check-latest: true
 
       # Pinned to @latest deliberately: a vulnerability scanner frozen at an old version stops
       # knowing about new vulnerabilities, which defeats the reason it is here.
