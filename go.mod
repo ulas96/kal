@@ -5,6 +5,7 @@ go 1.25.0
 require (
 	github.com/99designs/gqlgen v0.17.94
 	github.com/go-pg/pg/v10 v10.15.1
+	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/ulas96/luima v0.1.0
 	github.com/vektah/gqlparser/v2 v2.5.36
 	golang.org/x/crypto v0.54.0
@@ -20,7 +21,6 @@ require (
 	github.com/gofiber/fiber/v3 v3.4.0 // indirect
 	github.com/gofiber/schema v1.8.0 // indirect
 	github.com/gofiber/utils/v2 v2.1.1 // indirect
-	github.com/golang-jwt/jwt/v5 v5.3.1 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/hashicorp/golang-lru/v2 v2.0.7 // indirect
 	github.com/jinzhu/inflection v1.0.0 // indirect
