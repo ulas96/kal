@@ -145,8 +145,10 @@ type Config struct {
 	// AllowIntrospection @notice Decides per request whether introspection is answered. Nil
 	// means never.
 	//
-	// @dev Off by default because luima turns introspection on unconditionally with no off
-	// switch. Role-gate it with func(ctx) bool { return authz.HasRole(ctx, "admin") }.
+	// @dev luima turns introspection on and, since 0.2.0, offers Config.DisableIntrospection to
+	// turn it off again — an all-or-nothing deploy-time switch. This is the per-request form, so
+	// it can be role-gated: func(ctx) bool { return authz.HasRole(ctx, "admin") }. Off by
+	// default, because the zero Config is the production posture.
 	AllowIntrospection func(context.Context) bool
 
 	// SensitiveFields @notice Fields that may be selected at most once per document. Nil takes

@@ -5,14 +5,17 @@
 // else in kal, so any kal package can return a typed auth error without pulling in gqlgen's
 // handler, the session machinery, or a driver.
 //
-// Two luima behaviours this package is written around, both findings in luima's security
-// review (E-01, E-04):
+// Two rules this package is written around, from luima's security review (E-01, E-04):
 //
-//   - luimaerr.PresentError returns any *gqlerror.Error found in the chain to the client whole —
-//     message, path and extensions. Therefore nothing in kal ever wraps a *gqlerror.Error.
-//   - luimaerr.CustomError.Error() concatenates the internal cause, so a message built from any
-//     err.Error() undoes redaction in a line that reads like careful error handling. Therefore a
-//     Message here is always literal text, never derived from another error.
+//   - Nothing in kal ever wraps a *gqlerror.Error. Through luima 0.1.0 the presenter matched that
+//     branch with errors.As, which walks the chain, so any error wrapping a gqlerror was returned
+//     to the client whole — message, path and extensions — and redaction was opt-out. luima 0.2.0
+//     fixed it with a type assertion on the top-level error, and tests/ pins the fixed behaviour
+//     from out here. The rule stays anyway: wrapping a gqlerror asserts something about the
+//     client's query that kal's own error text does not mean.
+//   - A Message is always literal text, never derived from another error. luimaerr.CustomError's
+//     Error() concatenates the internal cause, so building a client-visible message from any
+//     err.Error() undoes redaction in a line that reads like careful error handling.
 package kalerr
 
 import (

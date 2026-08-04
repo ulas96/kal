@@ -121,9 +121,9 @@ func walkSelections(set ast.SelectionSet, level int, counts map[string]int, tota
 // approves.
 //
 // @dev gqlgen's executor defaults DisableIntrospection to true and extension.Introspection
-// exists to turn it *on* — which luima does unconditionally with no off switch. This mutator
-// runs after the middleware has put identity in the context, so introspection becomes
-// role-gated in one place.
+// exists to turn it *on* — which luima does, with Config.DisableIntrospection since 0.2.0 as the
+// all-or-nothing way back. This mutator runs after the middleware has put identity in the
+// context, so the decision can be per request and role-gated rather than per deploy.
 //
 // Worth saying plainly: introspection off is a smaller attack surface, not confidentiality.
 // gqlparser appends "Did you mean …?" to validation errors and luima's presenter passes
