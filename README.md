@@ -31,8 +31,8 @@ and applies to a `DELETE` without a read-then-check round trip that has a TOCTOU
 go get github.com/ulas96/kal
 ```
 
-Requires **luima ≥ 0.2.0** for the `HTTPMiddleware`, `Configure` and scoped-`crud` seams. Postgres 13
-or newer (`gen_random_uuid()` is built in from 13).
+Requires **luima ≥ 0.2.0** for the `HTTPMiddleware`, `Configure` and scoped-`crud` seams — kal is
+built and tested against `v0.2.1`. Postgres 13 or newer (`gen_random_uuid()` is built in from 13).
 
 ## Wiring
 

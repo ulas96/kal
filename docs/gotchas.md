@@ -113,8 +113,9 @@ hundred aliased `login` selections in one document is one request. Fiber's `limi
 at all — the counting has to happen in an operation interceptor and in the resolver.
 
 **23 · Introspection defaults to *off* in gqlgen's executor.** `extension.Introspection` exists to
-turn it **on**, and luima adds it unconditionally with no off switch. kal's `Configure` replaces that
-with a per-request predicate.
+turn it **on**, which luima does. luima 0.2.0 added `Config.DisableIntrospection` for the all-or-
+nothing case; kal's `Configure` goes further and makes it a per-request predicate, so it can be
+role-gated rather than switched by a deploy.
 
 **24 · Introspection off is a smaller attack surface, not confidentiality.** gqlparser appends
 "Did you mean …?" to validation errors, and luima's presenter passes validation errors through by
@@ -123,10 +124,13 @@ what closes it, and `Configure` sets it.
 
 ## Errors
 
-**25 · luima's `PresentError` returns any `*gqlerror.Error` in the chain to the client whole.** It
-uses `errors.As`, which walks the whole chain, so an error *wrapping* a gqlerror is returned with its
-message, path and extensions, bypassing redaction (luima finding E-01). Therefore **kal never wraps a
-`*gqlerror.Error`**, and neither should your resolvers until that is fixed upstream.
+**25 · Never wrap a `*gqlerror.Error` — and know why the rule outlived its bug.** Through luima
+0.1.0, `PresentError` matched the gqlerror branch with `errors.As`, which walks the whole chain, so
+any error *wrapping* a gqlerror was returned to the client whole — message, path and extensions —
+and redaction was effectively opt-out (luima finding E-01). **luima 0.2.0 fixed it** with a type
+assertion on the top-level error, and `TestPresentError` pins the fixed behaviour from kal's side so
+a regression is caught here rather than in production. Keep the habit anyway: wrapping a gqlerror
+says something about the client's query that your own error text probably does not mean.
 
 **26 · `CustomError.Error()` concatenates the internal cause.** Populating a `UserMessage` from any
 `err.Error()` undoes redaction in a line that reads like careful error handling (finding E-04). A

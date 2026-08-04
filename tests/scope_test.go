@@ -19,21 +19,6 @@ type doc struct {
 	Title     string   `pg:"title"`
 }
 
-// scopedDelete @notice Deletes by primary key with a Scope predicate applied.
-//
-// @dev Exactly the statement luima's crud.Delete issues once it takes query options — the
-// patch this library is written against. Spelled out here rather than skipped, so the
-// property Scope exists for is proven against a real Postgres today; when luima ≥ 0.2.0
-// lands, the call is luima.Delete(ctx, db, key, authz.Scope(ctx, "owner_id")) and this
-// helper goes away.
-func scopedDelete(ctx context.Context, db orm.DB, key *doc, opt func(*orm.Query) *orm.Query) (bool, error) {
-	res, err := opt(db.ModelContext(ctx, key).WherePK()).Delete()
-	if err != nil {
-		return false, err
-	}
-	return res.RowsAffected() > 0, nil
-}
-
 // TestDBScope @notice Two owners, one table: a scoped read sees only your rows, and a scoped
 // delete leaves someone else's row exactly where it was.
 //
@@ -78,7 +63,7 @@ func TestDBScope(t *testing.T) {
 	})
 
 	t.Run("a scoped delete of someone else's row reports nothing and changes nothing", func(t *testing.T) {
-		deleted, err := scopedDelete(ctx, db, &doc{ID: bobDoc}, authz.Scope(aliceCtx, "owner_id"))
+		deleted, err := luima.Delete(ctx, db, &doc{ID: bobDoc}, authz.Scope(aliceCtx, "owner_id"))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -96,7 +81,7 @@ func TestDBScope(t *testing.T) {
 	})
 
 	t.Run("a scoped delete of your own row works", func(t *testing.T) {
-		deleted, err := scopedDelete(ctx, db, &doc{ID: aliceDoc}, authz.Scope(aliceCtx, "owner_id"))
+		deleted, err := luima.Delete(ctx, db, &doc{ID: aliceDoc}, authz.Scope(aliceCtx, "owner_id"))
 		if err != nil {
 			t.Fatal(err)
 		}

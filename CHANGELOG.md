@@ -49,9 +49,11 @@ Initial development. Everything below is new.
 
 ### Requirements
 
-- **luima ≥ 0.2.0** for the `Config.HTTPMiddleware` and `Config.Configure` seams, and for the query
-  options on `crud.Get`, `crud.Update` and `crud.Delete` that `Scope` composes into. kal itself
-  compiles against luima 0.1.0 — only the wiring needs the newer version.
+- **luima ≥ 0.2.0**, pinned to `v0.2.1`, for the `Config.HTTPMiddleware` and `Config.Configure`
+  seams and for the query options on `crud.Get`, `crud.Update` and `crud.Delete` that `Scope`
+  composes into. `TestDBLuimaIntegration` exercises all three through a real Fiber app: a login
+  cookie surviving the fasthttp adaptor, a typed `Principal` and a deadline reaching a resolver,
+  and the anti-batching guard registered through `Configure`.
 - Postgres 13 or newer, for `gen_random_uuid()`.
 
 ### Not included, deliberately
@@ -63,5 +65,6 @@ and a pluggable `Store` interface are out of scope — see the README and `SECUR
 
 ### Still to come
 
-- An `examples/quickstart` nested module, once luima 0.2.0 is published — it cannot build against
-  0.1.0, because the wiring it would demonstrate is exactly the three patched seams.
+- An `examples/quickstart` nested module. Now unblocked — luima 0.2.1 is published and
+  `TestDBLuimaIntegration` already wires the same three seams — but it needs a gqlgen codegen step
+  and a nested module, which is a separate piece of work.

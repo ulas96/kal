@@ -64,6 +64,24 @@ func TestPresentError(t *testing.T) {
 			t.Errorf("validation error was rewritten: %v", got)
 		}
 	})
+
+	// luima 0.2.0 fixed E-01: the gqlerror branch was an errors.As that walked the whole chain,
+	// so any error *wrapping* a gqlerror was returned to the client whole. kal's rule was
+	// therefore "never wrap a *gqlerror.Error". This pins the fixed behaviour from the outside,
+	// because that rule can only be relaxed for as long as it holds.
+	t.Run("a wrapped gqlerror is redacted, not passed through", func(t *testing.T) {
+		inner := gqlerror.Errorf("some validation text")
+		wrapped := fmt.Errorf("insert into auth_users failed for tenant 42: %w", inner)
+		got := kalerr.PresentError(ctx, wrapped)
+		if got.Message != "internal server error" {
+			t.Errorf("Message = %q, want the redaction — luima's E-01 fix has regressed", got.Message)
+		}
+		for _, leak := range []string{"auth_users", "tenant 42"} {
+			if strings.Contains(got.Message, leak) {
+				t.Errorf("%q reached the client", leak)
+			}
+		}
+	})
 }
 
 // TestCustomErrorBridge @notice A consumer who forgets to swap luima's ErrorPresenter for kal's
