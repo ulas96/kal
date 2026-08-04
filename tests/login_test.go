@@ -91,11 +91,23 @@ func newAuthnFixture(t *testing.T) *authnFixture {
 	m := &recordingMailer{}
 	a, err := authn.NewAccounts(authn.AccountsOptions{
 		Hasher: h, Sessions: s, Mailer: m, Schema: testSchema,
+		BaseURL: "https://app.example.test",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	return &authnFixture{db: db, accounts: a, sessions: s, mailer: m}
+}
+
+// userID @notice The id of an account by address, for tests that need to reach past the flows.
+func (f *authnFixture) userID(t *testing.T, email string) string {
+	t.Helper()
+	var id string
+	if _, err := f.db.QueryOne(pg.Scan(&id),
+		`select id from auth_users where lower(email) = ?`, strings.ToLower(email)); err != nil {
+		t.Fatal(err)
+	}
+	return id
 }
 
 // request @notice Runs fn as if it were a resolver: inside the session middleware, with a
@@ -540,6 +552,7 @@ func TestDBRehashOnLogin(t *testing.T) {
 	}
 	a, err := authn.NewAccounts(authn.AccountsOptions{
 		Hasher: strong, Sessions: s, Mailer: &recordingMailer{}, Schema: testSchema,
+		BaseURL: "https://app.example.test",
 	})
 	if err != nil {
 		t.Fatal(err)

@@ -3,7 +3,10 @@ package authn
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
+	"net"
+	"net/url"
 	"regexp"
 	"strings"
 
@@ -33,6 +36,14 @@ type AccountsOptions struct {
 	Sessions *session.Sessions
 	Mailer   Mailer
 
+	// BaseURL @notice The origin every emailed link is built under, e.g.
+	// "https://app.example.com". Required, and required to be configuration.
+	//
+	// @dev There is deliberately no way to derive this from the request. A link origin taken
+	// from the Host header is Host-header injection: an attacker who can set that header turns
+	// your password-reset email into a link to their own server.
+	BaseURL string
+
 	// CookieName @notice The session cookie Login and Logout manage. Default
 	// session.DefaultCookieName.
 	CookieName string
@@ -57,6 +68,7 @@ type Accounts struct {
 	hasher          *Hasher
 	sessions        *session.Sessions
 	mailer          Mailer
+	baseURL         string
 	cookieName      string
 	allowUnverified bool
 	sql             statements
@@ -71,10 +83,14 @@ func NewAccounts(opts AccountsOptions) (*Accounts, error) {
 	if opts.Hasher == nil || opts.Sessions == nil || opts.Mailer == nil {
 		return nil, errors.New("authn: Hasher, Sessions and Mailer are all required — there is no default for any of them")
 	}
+	if err := ValidateBaseURL(opts.BaseURL); err != nil {
+		return nil, err
+	}
 	a := &Accounts{
 		hasher:          opts.Hasher,
 		sessions:        opts.Sessions,
 		mailer:          opts.Mailer,
+		baseURL:         strings.TrimRight(opts.BaseURL, "/"),
 		cookieName:      opts.CookieName,
 		allowUnverified: opts.AllowUnverifiedLogin,
 	}
@@ -90,6 +106,45 @@ func NewAccounts(opts AccountsOptions) (*Accounts, error) {
 	}
 	a.sql = render(prefix)
 	return a, nil
+}
+
+// ValidateBaseURL @notice Checks the origin emailed links are built under: absolute, https,
+// and no path, query or fragment.
+//
+// @dev Required with no default, because the alternative — deriving it from the request Host
+// header — is Host-header injection, and a password-reset link is the last place to accept
+// attacker-controlled input. http:// is permitted only for loopback, so local development
+// works without a flag that would eventually be set in production.
+//
+// @param raw the configured origin
+// @return error a description of what is wrong with it, or nil
+func ValidateBaseURL(raw string) error {
+	if raw == "" {
+		return errors.New("authn: BaseURL is required — emailed links have no origin without it, and taking one from the request Host header is Host-header injection")
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("authn: BaseURL is not a URL: %w", err)
+	}
+	if u.Host == "" {
+		return errors.New("authn: BaseURL must be absolute, e.g. https://app.example.com")
+	}
+	if u.RawQuery != "" || u.Fragment != "" {
+		return errors.New("authn: BaseURL must not carry a query or fragment")
+	}
+	if u.Scheme != "https" && !isLoopback(u.Hostname()) {
+		return errors.New("authn: BaseURL must be https outside localhost")
+	}
+	return nil
+}
+
+// isLoopback @notice Whether a hostname is the local machine, for the https exemption.
+func isLoopback(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // invalidCredentials @notice The one authentication failure. The message is a package-level
