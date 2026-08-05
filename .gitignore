@@ -13,7 +13,10 @@
 
 # Code coverage profiles and other test artifacts
 *.out
-coverage.*
+# Anchored, and not `coverage.*`: unanchored, that pattern also swallowed authz/coverage.go,
+# which builds locally and fails on a fresh clone.
+/coverage.out
+/coverage.html
 *.coverprofile
 profile.cov
 
