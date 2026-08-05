@@ -1,0 +1,35 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  # A Go module is published by the tag itself, so there is no artifact to build and nothing to
+  # upload. The only thing this workflow can still get wrong is publishing a tag that does not
+  # pass, which is what gating on CI prevents.
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  release:
+    needs: ci
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: create the GitHub release
+        run: gh release create "$GITHUB_REF_NAME" --generate-notes --verify-tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      # proxy.golang.org only learns a version exists when something asks for it, and until it
+      # does, `go get github.com/ulas96/kal@version` fails for everyone. This is that first ask.
+      - name: warm the module proxy
+        run: |
+          curl -sSf "https://proxy.golang.org/github.com/ulas96/kal/@v/${GITHUB_REF_NAME}.info"
+          curl -sSf "https://sum.golang.org/lookup/github.com/ulas96/kal@${GITHUB_REF_NAME}" >/dev/null

@@ -5,6 +5,10 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  # release.yml calls this instead of restating the matrix, so a tag is gated by the same three
+  # jobs a pull request is. A release workflow with its own weaker test step is how a tag ends
+  # up published from a tree that never ran the DB-backed tests.
+  workflow_call:
 
 permissions:
   contents: read
