@@ -88,6 +88,7 @@ select commitment from %[1]sauth_zk_commitments where user_id = ?`
 // Declared here rather than reached for in authn: all SQL for a package lives in that package's
 // one sql.go, so a schema change has one place per package to be found. coalesce keeps the scan
 // on a string — a null password_hash is an account that has none, not a driver error.
+// #nosec G101 -- SQL text with bound parameters, not a credential
 const passwordHashByUserSQL = `
 select coalesce(password_hash, '') from %[1]sauth_users where id = ? and deleted_at is null`
 
@@ -104,6 +105,7 @@ const lockTreeSQL = `select pg_advisory_xact_lock(715056534291)`
 const nextLeafSQL = `
 select coalesce(max(leaf_index) + 1, 0) from %[1]sauth_zk_credentials`
 
+// #nosec G101 -- SQL text with bound parameters, not a credential
 const insertCredentialSQL = `
 insert into %[1]sauth_zk_credentials (leaf_index, commitment, issued_to)
 values (?, ?, nullif(?, '')::uuid)`
@@ -112,6 +114,7 @@ const credentialByIndexSQL = `
 select commitment, revoked_at is not null
   from %[1]sauth_zk_credentials where leaf_index = ?`
 
+// #nosec G101 -- SQL text with bound parameters, not a credential
 const credentialsByUserSQL = `
 select leaf_index from %[1]sauth_zk_credentials
  where issued_to = ? and revoked_at is null order by leaf_index`
