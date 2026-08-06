@@ -172,11 +172,36 @@ list — never `*` with credentials.
 | `authz` | `Principal`, `@auth`, `Scope`, `AssertAuthCoverage`, roles, RLS |
 | `session` | tokens, the store, the cookie, the middleware, the JWT leg |
 | `kalerr` | the error contract |
+| `zkauthn` | Groth16/BN254 knowledge and membership proofs, the credential tree, pseudonymous login |
+| `zkauthz` | request-local proven claims behind `@auth(proves:)` |
 | `migrations` | the schema, as `.sql` behind an `embed.FS` |
 | `tests` | every test, outside the packages it exercises |
 
-The core adds **one** dependency beyond luima's graph: `golang-jwt/jwt/v5`, and only for the optional
-JWT leg. Argon2 costs nothing new — `golang.org/x/crypto` is already there.
+### What it costs you to depend on kal
+
+Beyond luima's graph, kal adds **four** direct requires — read `go.mod` for the pinned versions and
+`go.sum` for the full transitive set:
+
+| module | why | who pays |
+|---|---|---|
+| `github.com/golang-jwt/jwt/v5` | the optional JWT leg | everyone |
+| `github.com/consensys/gnark` | the Groth16 circuits and prover/verifier | everyone |
+| `github.com/consensys/gnark-crypto` | BN254 field, pairing and MiMC | everyone |
+| `golang.org/x/sync` | the verification semaphore | everyone |
+
+Argon2 costs nothing new — `golang.org/x/crypto` is already there.
+
+**"Who pays: everyone" is literal, and it is the part worth reading twice.** `gnark` and
+`gnark-crypto` are *direct* requires in kal's `go.mod`, so they enter the module graph of every
+consumer and are recorded in every consumer's `go.sum` — whether or not a single line of `zkauthn`
+is imported, and whether or not `Config.ZK` is ever set. Leaving `Config.ZK` nil turns the feature
+off at runtime; it does not remove the modules. Neither would a build tag: build tags select which
+files compile, they do not change what `go.mod` requires. Between them the two modules pull in
+assembly, `unsafe`, and roughly a dozen transitive requires.
+
+If that is not acceptable for your project, the honest answer is not to depend on kal today. Say so
+on the issue tracker — splitting `zkauthn`/`zkauthz` into a separate module is the fix, and it is
+not one a configuration flag can substitute for.
 
 ## Deliberately not here
 
@@ -186,8 +211,30 @@ beyond a one-method `Mailer`, avatar storage, a policy DSL, SMS as a second fact
 primary factor, and a pluggable `Store` interface — Postgres is the premise, so that interface would
 have one implementation and would forbid the `JOIN` that is the entire point.
 
-OAuth/OIDC and TOTP MFA are planned as separate opt-in packages, so their dependencies stay out of
-the graph of anyone who does not use them.
+OAuth/OIDC and TOTP MFA are planned as **separate modules**, not merely separate packages, because a
+separate package in this module would still put its dependencies in every consumer's graph — which
+is exactly what happened with `zkauthn` and `gnark`, and is described honestly above rather than
+repeated here as an aspiration.
+
+## Operating the ZK module
+
+The proving key is a client artifact and kal never loads one: the server holds only verifying keys,
+pinned by SHA-256 in your own source. Packaging and shipping the prover — a JavaScript/WASM bundle,
+a mobile client, a CLI — is your responsibility and your trust boundary. A client that computes
+proofs also holds the member's secret, so a compromised prover bundle is a compromised credential
+for every member who loads it; version and pin it the way you would any other credential-handling
+code.
+
+**Recovery.** A Knowledge secret is returned exactly once and is not recoverable. Re-enrolment is
+the recovery path: `EnrollKnowledge` replaces the commitment after re-verifying the account's
+password, or recent MFA when the account has no password, and revokes every other session when it
+does. An account with neither factor cannot self-serve and needs an operator.
+
+**Revocation.** Disabling an account does not revoke its membership credential. A credential is
+deliberately not joined to the account that received it, so soft-deleting a user leaves their leaf
+live and they can still log in under a fresh pseudonym for any audience they have not used.
+`RevokeCredentialsForUser` is the operation that revokes it, and calling it is a deployment
+decision kal does not make for you.
 
 ## Development
 
