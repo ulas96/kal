@@ -47,7 +47,7 @@ import (
 // a predicate matching nothing when the caller is anonymous
 func Scope(ctx context.Context, column string) func(*orm.Query) *orm.Query {
 	p, ok := From(ctx)
-	if !ok {
+	if !ok || p.UserID == "" {
 		return func(q *orm.Query) *orm.Query { return q.Where("false") }
 	}
 	if bypass, hasBypass := bypassFrom(ctx); hasBypass && hasRole(p.Roles, bypass) {
