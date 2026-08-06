@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -25,9 +26,11 @@ import (
 	"github.com/ulas96/kal/authz"
 	"github.com/ulas96/kal/kalerr"
 	"github.com/ulas96/kal/session"
+	"github.com/ulas96/kal/zkauthn"
+	"github.com/ulas96/kal/zkauthz"
 )
 
-// The root package re-exports four sub-packages, so the thing worth asserting is that the two
+// The root package re-exports six sub-packages, so the thing worth asserting is that the two
 // spellings are genuinely interchangeable rather than merely similar.
 var (
 	// Aliases, not definitions: were these `type Principal authz.Principal`, the round trip
@@ -58,7 +61,107 @@ var (
 	_, _ wiredFn    = kal.AssertDirectivesWired, authz.AssertDirectivesWired
 	_, _ presentFn  = kal.PresentError, kalerr.PresentError
 	_, _ validateFn = kal.ValidatePassword, authn.ValidatePassword
+
+	// The zk surface, on the same terms. kal.go gained roughly fifty ZK* names by hand and none of
+	// them had an assertion, so nothing stopped a future `type ZKClaim struct{…}` — a definition
+	// rather than an alias — from silently breaking every consumer who passes a kal.ZKClaim to a
+	// zkauthn function. Two-way, because a one-way assignment also compiles for a convertible type.
+	_ zkauthn.Field             = kal.ZKField{}
+	_ kal.ZKField               = zkauthn.Field{}
+	_ zkauthn.Secret            = kal.ZKSecret{}
+	_ kal.ZKSecret              = zkauthn.Secret{}
+	_ zkauthn.Circuit           = kal.ZKCircuitKnowledge
+	_ kal.ZKCircuit             = zkauthn.CircuitMembership
+	_ zkauthn.VerifyingKey      = kal.ZKVerifyingKey{}
+	_ kal.ZKVerifyingKey        = zkauthn.VerifyingKey{}
+	_ zkauthn.ProvingKey        = kal.ZKProvingKey{}
+	_ kal.ZKProvingKey          = zkauthn.ProvingKey{}
+	_ zkauthn.KnowledgeCircuit  = kal.ZKKnowledgeCircuit{}
+	_ kal.ZKKnowledgeCircuit    = zkauthn.KnowledgeCircuit{}
+	_ zkauthn.MembershipCircuit = kal.ZKMembershipCircuit{}
+	_ kal.ZKMembershipCircuit   = zkauthn.MembershipCircuit{}
+	_ zkauthn.KnowledgeWitness  = kal.ZKKnowledgeWitness{}
+	_ kal.ZKKnowledgeWitness    = zkauthn.KnowledgeWitness{}
+	_ zkauthn.MembershipWitness = kal.ZKMembershipWitness{}
+	_ kal.ZKMembershipWitness   = zkauthn.MembershipWitness{}
+	_ zkauthn.MembershipPublic  = kal.ZKMembershipPublic{}
+	_ kal.ZKMembershipPublic    = zkauthn.MembershipPublic{}
+	_ zkauthn.ClaimKind         = kal.ZKClaimRecurring
+	_ kal.ZKClaimKind           = zkauthn.ClaimOneShot
+	_ zkauthn.Claim             = kal.ZKClaim{}
+	_ kal.ZKClaim               = zkauthn.Claim{}
+	_ zkauthn.VerifiedClaim     = kal.ZKVerifiedClaim{}
+	_ kal.ZKVerifiedClaim       = zkauthn.VerifiedClaim{}
+	_ zkauthn.Options           = kal.ZKOptions{}
+	_ kal.ZKOptions             = zkauthn.Options{}
+	_ zkauthn.ZK                = kal.ZKService{}
+	_ kal.ZKService             = zkauthn.ZK{}
+	_ zkauthn.Credential        = kal.ZKCredential{}
+	_ kal.ZKCredential          = zkauthn.Credential{}
+	_ zkauthn.MerklePath        = kal.ZKMerklePath{}
+	_ kal.ZKMerklePath          = zkauthn.MerklePath{}
+	_ zkauthn.KnowledgeRequest  = kal.ZKKnowledgeRequest{}
+	_ kal.ZKKnowledgeRequest    = zkauthn.KnowledgeRequest{}
+	_ zkauthn.MembershipRequest = kal.ZKMembershipRequest{}
+	_ kal.ZKMembershipRequest   = zkauthn.MembershipRequest{}
+	_ zkauthz.Claims            = kal.ZKClaims{}
+	_ kal.ZKClaims              = zkauthz.Claims{}
+
+	_, _ zkSetupFn           = kal.SetupZK, zkauthn.Setup
+	_, _ zkLoadVKFn          = kal.LoadZKVerifyingKey, zkauthn.LoadVerifyingKey
+	_, _ zkLoadPKFn          = kal.LoadZKProvingKey, zkauthn.LoadProvingKey
+	_, _ zkCircuitInfoFn     = kal.ZKCircuitInfo, zkauthn.CircuitInfo
+	_, _ zkProofSizeFn       = kal.ZKProofSize, zkauthn.ProofSize
+	_, _ zkKnowledgeValidFn  = kal.ZKKnowledgeValid, zkauthn.KnowledgeValid
+	_, _ zkMembershipValidFn = kal.ZKMembershipValid, zkauthn.MembershipValid
+	_, _ zkKnowledgeCommitFn = kal.ZKKnowledgeCommitment, zkauthn.KnowledgeCommitment
+	_, _ zkMemberCommitFn    = kal.ZKMembershipCommitment, zkauthn.MembershipCommitment
+	_, _ zkSingleLeafPathFn  = kal.ZKSingleLeafPath, zkauthn.SingleLeafPath
+	_, _ zkAudienceFn        = kal.NewZKAudience, zkauthn.NewAudience
+	_, _ zkNewFn             = kal.NewZK, zkauthn.New
+	_, _ zkNewClaimsFn       = kal.NewZKClaims, zkauthz.New
+	_, _ zkNullifierFn       = kal.ZKNullifier, zkauthn.Nullifier
+	_, _ zkChallengeFieldFn  = kal.ZKChallengeField, zkauthn.ChallengeField
+	_, _ zkWitnessForFn      = kal.ZKMembershipWitnessFor, zkauthn.MembershipWitnessFor
+
+	// Methods, reached through the alias, so a signature change on either side breaks the build.
+	_, _ zkEnrollFn = (*kal.ZKService).EnrollKnowledge, (*zkauthn.ZK).EnrollKnowledge
+	_, _ zkLoginFn  = (*kal.ZKService).Login, (*zkauthn.ZK).Login
+	_, _ zkProveFn  = (*kal.ZKService).ProveClaim, (*zkauthn.ZK).ProveClaim
+	_, _ zkVerifyFn = (*kal.ZKService).VerifyKnowledge, (*zkauthn.ZK).VerifyKnowledge
+	_, _ zkIssueFn  = (*kal.ZKService).IssueCredential, (*zkauthn.ZK).IssueCredential
+	_, _ zkPathFn   = (*kal.ZKService).Path, (*zkauthn.ZK).Path
+	_, _ zkRevokeFn = (*kal.ZKService).RevokeCredential, (*zkauthn.ZK).RevokeCredential
+	_, _ zkClaimFn  = (*kal.ZKService).Claim, (*zkauthn.ZK).Claim
+	_, _ zkProofsFn = (*kal.ZKClaims).Proofs, (*zkauthz.Claims).Proofs
 )
+
+// TestZKReExportedConstants checks the values the type assertions above cannot.
+//
+// A re-exported const is a fresh declaration, so `ZKMerkleDepth = 32` written out by hand compiles
+// and type-checks exactly like `ZKMerkleDepth = zkauthn.MerkleDepth` — right up until the circuit
+// depth changes and only one of them moves. The circuit IDs matter most: they are the pinned
+// statement identity, and a stale copy in the root package tells a consumer their key matches a
+// circuit it does not.
+// Covers: ZK-INV-001, ZK-TRE-013
+func TestZKReExportedConstants(t *testing.T) {
+	if kal.ZKMerkleDepth != zkauthn.MerkleDepth || kal.ZKSecretSize != zkauthn.SecretSize {
+		t.Errorf("tree constants drifted: depth %d/%d, secret %d/%d",
+			kal.ZKMerkleDepth, zkauthn.MerkleDepth, kal.ZKSecretSize, zkauthn.SecretSize)
+	}
+	if kal.ZKKnowledgeConstraints != zkauthn.KnowledgeConstraints ||
+		kal.ZKMembershipConstraints != zkauthn.MembershipConstraints {
+		t.Errorf("constraint counts drifted: knowledge %d/%d, membership %d/%d",
+			kal.ZKKnowledgeConstraints, zkauthn.KnowledgeConstraints,
+			kal.ZKMembershipConstraints, zkauthn.MembershipConstraints)
+	}
+	if kal.ZKKnowledgeCircuitID != zkauthn.KnowledgeCircuitID {
+		t.Errorf("knowledge circuit id = %s, want %s", kal.ZKKnowledgeCircuitID, zkauthn.KnowledgeCircuitID)
+	}
+	if kal.ZKMembershipCircuitID != zkauthn.MembershipCircuitID {
+		t.Errorf("membership circuit id = %s, want %s", kal.ZKMembershipCircuitID, zkauthn.MembershipCircuitID)
+	}
+}
 
 // The shapes the re-exported functions instantiate to.
 type (
@@ -70,6 +173,34 @@ type (
 	wiredFn    = func(any) error
 	presentFn  = func(context.Context, error) *gqlerror.Error
 	validateFn = func(string) error
+
+	zkSetupFn           = func(zkauthn.Circuit, io.Writer, io.Writer) error
+	zkLoadVKFn          = func(zkauthn.Circuit, io.Reader, []byte) (*zkauthn.VerifyingKey, error)
+	zkLoadPKFn          = func(zkauthn.Circuit, io.Reader) (*zkauthn.ProvingKey, error)
+	zkCircuitInfoFn     = func(zkauthn.Circuit) (int, [32]byte, error)
+	zkProofSizeFn       = func() int
+	zkKnowledgeValidFn  = func(zkauthn.KnowledgeWitness) bool
+	zkMembershipValidFn = func(zkauthn.MembershipWitness) bool
+	zkKnowledgeCommitFn = func(zkauthn.Secret) (zkauthn.Field, error)
+	zkMemberCommitFn    = func(zkauthn.Secret, uint64) (zkauthn.Field, error)
+	zkSingleLeafPathFn  = func(zkauthn.Field) (zkauthn.MerklePath, error)
+	zkAudienceFn        = func(string, string, string) zkauthn.Field
+	zkNewFn             = func(zkauthn.Options) (*zkauthn.ZK, error)
+	zkNewClaimsFn       = func(string) (*zkauthz.Claims, error)
+	zkNullifierFn       = func(zkauthn.Secret, zkauthn.Field) (zkauthn.Field, error)
+	zkChallengeFieldFn  = func(string) (zkauthn.Field, error)
+	zkWitnessForFn      = func(zkauthn.Credential, zkauthn.MerklePath, zkauthn.Claim,
+		zkauthn.Field, zkauthn.Field) zkauthn.MembershipWitness
+
+	zkEnrollFn = func(*zkauthn.ZK, context.Context, orm.DB, string) (zkauthn.Secret, error)
+	zkLoginFn  = func(*zkauthn.ZK, context.Context, orm.DB, zkauthn.MembershipRequest) (*authz.Principal, error)
+	zkProveFn  = func(*zkauthn.ZK, context.Context, orm.DB, zkauthn.MembershipRequest) error
+	zkVerifyFn = func(*zkauthn.ZK, context.Context, orm.DB, zkauthn.KnowledgeRequest) error
+	zkIssueFn  = func(*zkauthn.ZK, context.Context, orm.DB, string, uint64) (*zkauthn.Credential, error)
+	zkPathFn   = func(*zkauthn.ZK, context.Context, orm.DB, uint32) (*zkauthn.MerklePath, error)
+	zkRevokeFn = func(*zkauthn.ZK, context.Context, orm.DB, uint32) error
+	zkClaimFn  = func(*zkauthn.ZK, context.Context, orm.DB, string) (zkauthn.Claim, error)
+	zkProofsFn = func(*zkauthz.Claims, context.Context, []string) error
 )
 
 // newTestConfig @notice A minimal valid Config.
