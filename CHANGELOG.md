@@ -8,6 +8,56 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 While the major version is `0`, the public API may change in a minor release. Every such change
 will be listed here under **Changed** with the migration in one line.
 
+## [0.2.0] - 2026-08-06
+
+### Added
+
+- Optional `zkauthn` and `zkauthz` packages: Groth16/BN254 knowledge and membership proofs,
+  database-backed sparse Merkle credentials, pseudonymous sessions, and `@auth(proves:)`.
+
+Design documents, not released surface:
+
+- `docs/e2ee-handout.md` — the design for an optional `e2ee` package: client-hardened login password,
+  one vault row per user, and a wire format kal cannot decrypt. Document only; nothing is built yet.
+- `docs/security-audit-handout.md` — the procedure for an end-to-end security audit of the module:
+  verdicts against the claimed controls, thirteen passes over the surface, and a report format.
+  Document only; nothing is built yet.
+
+### Security
+
+Twenty findings from the zk module review are closed. The four that were exploitable:
+
+- `ZK.Login` could never succeed — the resolving statement's outer join read `auth_users` from the
+  snapshot taken before its own CTE inserted the pseudonym. Two statements now, and the resolve
+  matches the derived `zk-<hex>@invalid` address, so a nullifier bound to a real password-holding
+  account can no longer receive that account's session.
+- Revoking the highest live leaf aborted on a duplicate root and rolled `revoked_at` back with it,
+  leaving the credential able to prove membership. Republishing a returned-to root is now correct.
+- Replacing a knowledge commitment required only a session cookie, so the second factor was
+  defeated by the first. It now takes the current password, or recent MFA on an account without one.
+- Proof verification ran inside the database transaction, converting CPU pressure on an
+  unauthenticated endpoint into connection-pool exhaustion. It runs before the transaction opens;
+  the single-use `UPDATE` remains the sole arbiter of challenge freshness.
+
+Also: a recurring claim is no longer implicitly a login endpoint, an unknown claim name and a
+retired root now cost a real pairing, a one-shot allowance is not burned when delivery fails, and
+`proves: ["vote","vote"]` is no longer satisfied by one grant.
+
+The 147-case register in `docs/vulnurability-test-cases.md` is disposed of explicitly: 51 cases
+covered by a named test, 18 excused with reasons, 78 listed in a dated roadmap (§26) with the count
+pinned in `tests/zk_case_manifest_test.go`. `SECURITY.md` gains 25 zk control rows, each naming a
+test that exists and runs.
+
+### Changed
+
+- `authz.Directive` and the generated `DirectiveRoot.Auth` take a seventh parameter, `proves
+  []string`. Regenerate gqlgen and add the parameter to the assignment in your resolver root.
+- `authz.Scope` returns a false predicate for a principal with an empty `UserID`, where it
+  previously returned an unfiltered query. An anonymous scope now matches no rows.
+- `zkauthn.Options` requires a `Hasher`, and `zkauthn.EnrollKnowledge` takes a third parameter,
+  `currentPassword string`. Pass `""` on first enrolment; replacing an existing commitment
+  re-verifies the password, or recent MFA when the account has none, and revokes other sessions.
+
 ## [0.1.0] - 2026-08-05
 
 Initial development. Everything below is new.
