@@ -49,6 +49,9 @@ const (
 	CodeInvalidToken = "INVALID_TOKEN"
 	// CodeInvalidInput @notice Password policy and similar shape failures.
 	CodeInvalidInput = "INVALID_INPUT"
+	// CodeInvalidProof @notice Any malformed, expired, replayed or unsatisfied ZK proof.
+	// Deliberately unspecific so enrolment, roots and policy state are not enumerable.
+	CodeInvalidProof = "INVALID_PROOF"
 )
 
 // Error @notice A client-visible auth error with a stable machine-readable code.

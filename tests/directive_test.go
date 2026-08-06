@@ -41,7 +41,7 @@ func newCoverageSchema(t *testing.T, sdl string) graphql.ExecutableSchema {
 // callDirective @notice Invokes the directive with a resolver that records whether it ran.
 func callDirective(
 	t *testing.T,
-	d func(context.Context, any, graphql.Resolver, authz.AuthLevel, []string, *bool) (any, error),
+	d func(context.Context, any, graphql.Resolver, authz.AuthLevel, []string, *bool, []string) (any, error),
 	ctx context.Context, requires authz.AuthLevel, roles []string, mfa *bool,
 ) (ran bool, err error) {
 	t.Helper()
@@ -49,7 +49,7 @@ func callDirective(
 		ran = true
 		return "resolved", nil
 	}
-	_, err = d(ctx, nil, next, requires, roles, mfa)
+	_, err = d(ctx, nil, next, requires, roles, mfa, nil)
 	return ran, err
 }
 
@@ -228,7 +228,7 @@ func TestAssertAuthCoverage(t *testing.T) {
 func TestAssertDirectivesWired(t *testing.T) {
 	// The shape gqlgen generates.
 	type directiveRoot struct {
-		Auth     func(context.Context, any, graphql.Resolver, authz.AuthLevel, []string, *bool) (any, error)
+		Auth     func(context.Context, any, graphql.Resolver, authz.AuthLevel, []string, *bool, []string) (any, error)
 		HasScope func(context.Context, any, graphql.Resolver, string) (any, error)
 	}
 
@@ -290,7 +290,7 @@ func TestDirectiveSDLParses(t *testing.T) {
 	for _, a := range def.Arguments {
 		names = append(names, a.Name)
 	}
-	want := "requires roles mfa"
+	want := "requires roles mfa proves"
 	if got := strings.Join(names, " "); got != want {
 		t.Errorf("argument order = %q, want %q — the generated Go signature follows this order", got, want)
 	}

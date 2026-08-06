@@ -65,6 +65,7 @@ const DirectiveSDL = `directive @auth(
   requires: AuthLevel! = AUTHENTICATED
   roles:    [String!]
   mfa:      Boolean
+  proves:   [String!]
 ) on FIELD_DEFINITION | OBJECT
 
 enum AuthLevel { ANONYMOUS AUTHENTICATED }
@@ -83,6 +84,11 @@ type DirectiveOptions struct {
 	// BypassRole @notice A role that satisfies any `roles` requirement. Empty means none —
 	// there is no implicit "admin".
 	BypassRole string
+
+	// Proofs @notice Satisfies all named zero-knowledge claims from request context. Nil
+	// denies every non-empty proves requirement, so an installed schema cannot silently run
+	// without its proof middleware.
+	Proofs func(ctx context.Context, claims []string) error
 }
 
 // Directive @notice The @auth implementation, for your generated DirectiveRoot.
@@ -105,12 +111,12 @@ type DirectiveOptions struct {
 //
 // @param opts zero value for the defaults
 // @return func the directive implementation, matching gqlgen's generated field type
-func Directive(opts DirectiveOptions) func(ctx context.Context, obj any, next graphql.Resolver, requires AuthLevel, roles []string, mfa *bool) (any, error) {
+func Directive(opts DirectiveOptions) func(ctx context.Context, obj any, next graphql.Resolver, requires AuthLevel, roles []string, mfa *bool, proves []string) (any, error) {
 	window := opts.MFAWindow
 	if window == 0 {
 		window = DefaultMFAWindow
 	}
-	return func(ctx context.Context, _ any, next graphql.Resolver, requires AuthLevel, roles []string, mfa *bool) (any, error) {
+	return func(ctx context.Context, _ any, next graphql.Resolver, requires AuthLevel, roles []string, mfa *bool, proves []string) (any, error) {
 		// An unrecognised level denies. The enum makes this unreachable through a valid
 		// schema, and a default that let an unknown value through would be a bypass waiting
 		// for a schema edit.
@@ -124,7 +130,7 @@ func Directive(opts DirectiveOptions) func(ctx context.Context, obj any, next gr
 			// Anonymous is allowed only where the schema says so, and then no role or MFA
 			// requirement can be satisfied — an ANONYMOUS field carrying roles is a schema
 			// mistake, and denying is the safe reading of it.
-			if requires == LevelAnonymous && len(roles) == 0 && (mfa == nil || !*mfa) {
+			if requires == LevelAnonymous && len(roles) == 0 && (mfa == nil || !*mfa) && len(proves) == 0 {
 				return next(ctx)
 			}
 			return nil, &kalerr.Error{Code: kalerr.CodeUnauthenticated, Message: "authentication required"}
@@ -138,6 +144,16 @@ func Directive(opts DirectiveOptions) func(ctx context.Context, obj any, next gr
 			if p.MFAAt.IsZero() || time.Since(p.MFAAt) > window {
 				return nil, &kalerr.Error{Code: kalerr.CodeMFARequired,
 					Message: "multi-factor authentication required"}
+			}
+		}
+
+		if len(proves) > 0 {
+			if opts.Proofs == nil {
+				return nil, &kalerr.Error{Code: kalerr.CodeInvalidProof,
+					Message: "zero-knowledge proof required"}
+			}
+			if err := opts.Proofs(ctx, proves); err != nil {
+				return nil, err
 			}
 		}
 

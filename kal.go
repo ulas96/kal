@@ -57,6 +57,7 @@ import (
 	"crypto/ed25519"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"time"
 
@@ -70,7 +71,22 @@ import (
 	"github.com/ulas96/kal/authz"
 	"github.com/ulas96/kal/kalerr"
 	"github.com/ulas96/kal/session"
+	"github.com/ulas96/kal/zkauthn"
+	"github.com/ulas96/kal/zkauthz"
 )
+
+// ZKConfig @notice Enables Groth16 knowledge and anonymous-membership authentication.
+//
+// @dev The operator supplies both verifying keys from read-only storage and pins their hashes
+// in application source. Proving keys are never loaded by the server or committed with kal.
+type ZKConfig struct {
+	KnowledgeVerifyingKey        io.Reader
+	KnowledgeVerifyingKeySHA256  []byte
+	MembershipVerifyingKey       io.Reader
+	MembershipVerifyingKeySHA256 []byte
+	RootGrace                    time.Duration
+	MaxConcurrentVerifications   int64
+}
 
 // Config @notice Assembles kal.
 //
@@ -171,6 +187,10 @@ type Config struct {
 	//
 	// @dev Two keys make rotation a deploy rather than an outage: the first signs, all verify.
 	JWTKeys []ed25519.PrivateKey
+
+	// ZK @notice Optional zero-knowledge MFA, membership login and proven claims. Nil keeps
+	// today's authentication and dependency behavior at runtime.
+	ZK *ZKConfig
 }
 
 // Auth @notice Everything kal exposes to an application, wired and validated.
@@ -185,10 +205,13 @@ type Auth struct {
 	Hasher *authn.Hasher
 	// JWT @notice The optional bearer-token leg. Nil unless JWTIssuer was set.
 	JWT *session.JWT
+	// ZK @notice The optional proof and credential service. Nil unless Config.ZK was set.
+	ZK *zkauthn.ZK
 
-	db     *pg.DB
-	cfg    Config
-	mwOpts session.MiddlewareOptions
+	db       *pg.DB
+	cfg      Config
+	mwOpts   session.MiddlewareOptions
+	zkClaims *zkauthz.Claims
 }
 
 // New @notice Validates the configuration and wires everything up.
@@ -244,6 +267,36 @@ func New(cfg Config) (*Auth, error) {
 		db: cfg.DB, cfg: cfg,
 		mwOpts: session.MiddlewareOptions{CookieName: cfg.CookieName, ClientIP: cfg.ClientIP},
 	}
+	if cfg.ZK != nil {
+		claims, err := zkauthz.New(cfg.TableSchema)
+		if err != nil {
+			return nil, err
+		}
+		knowledgeVK, err := zkauthn.LoadVerifyingKey(zkauthn.CircuitKnowledge,
+			cfg.ZK.KnowledgeVerifyingKey, cfg.ZK.KnowledgeVerifyingKeySHA256)
+		if err != nil {
+			return nil, err
+		}
+		membershipVK, err := zkauthn.LoadVerifyingKey(zkauthn.CircuitMembership,
+			cfg.ZK.MembershipVerifyingKey, cfg.ZK.MembershipVerifyingKeySHA256)
+		if err != nil {
+			return nil, err
+		}
+		a.ZK, err = zkauthn.New(zkauthn.Options{
+			KnowledgeVK: knowledgeVK, MembershipVK: membershipVK,
+			Sessions: sessions, Hasher: hasher, ProofSink: claims.Add,
+			CookieName: cfg.CookieName, Schema: cfg.TableSchema,
+			RootGrace: cfg.ZK.RootGrace,
+			// The same window the @auth(mfa:) directive uses. Two windows would let a deployment
+			// tighten step-up for its fields while a stale elevation still replaced the factor.
+			MFAWindow:                  cfg.MFAWindow,
+			MaxConcurrentVerifications: cfg.ZK.MaxConcurrentVerifications,
+		})
+		if err != nil {
+			return nil, err
+		}
+		a.zkClaims = claims
+	}
 
 	if cfg.JWTIssuer != "" {
 		if len(cfg.JWTKeys) == 0 {
@@ -266,15 +319,17 @@ func New(cfg Config) (*Auth, error) {
 // @return func(http.Handler) http.Handler outermost-first middleware
 func (a *Auth) Middleware() func(http.Handler) http.Handler {
 	base := a.Sessions.Middleware(a.db, a.mwOpts)
-	if a.cfg.BypassRole == "" {
-		return base
-	}
-	// The bypass role travels on the context so Scope can read it without a package-level var,
-	// which would let one consumer redefine every other consumer's admin role.
 	return func(next http.Handler) http.Handler {
-		return base(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			next.ServeHTTP(w, r.WithContext(authz.WithBypassRole(r.Context(), a.cfg.BypassRole)))
-		}))
+		if a.zkClaims != nil {
+			next = a.zkClaims.Middleware(a.db)(next)
+		}
+		if a.cfg.BypassRole != "" {
+			inner := next
+			next = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				inner.ServeHTTP(w, r.WithContext(authz.WithBypassRole(r.Context(), a.cfg.BypassRole)))
+			})
+		}
+		return base(next)
 	}
 }
 
@@ -330,11 +385,15 @@ func (a *Auth) Configure() func(*handler.Server) {
 //	c.Directives.Auth = auth.Directive()
 //
 // Paste [authz.DirectiveSDL] into your schema for the matching declaration.
-func (a *Auth) Directive() func(context.Context, any, graphql.Resolver, AuthLevel, []string, *bool) (any, error) {
-	return authz.Directive(authz.DirectiveOptions{
+func (a *Auth) Directive() func(context.Context, any, graphql.Resolver, AuthLevel, []string, *bool, []string) (any, error) {
+	opts := authz.DirectiveOptions{
 		MFAWindow:  a.cfg.MFAWindow,
 		BypassRole: a.cfg.BypassRole,
-	})
+	}
+	if a.zkClaims != nil {
+		opts.Proofs = a.zkClaims.Proofs
+	}
+	return authz.Directive(opts)
 }
 
 // Migrate @notice Applies every embedded migration in order.
@@ -382,10 +441,45 @@ type Params = authn.Params
 // SessionInfo @notice One live session, as shown to its owner. See [session.Info].
 type SessionInfo = session.Info
 
+// ZKField @notice A canonical BN254 scalar encoding. See [zkauthn.Field].
+type ZKField = zkauthn.Field
+
+// ZKSecret @notice A generated 31-byte proof secret. See [zkauthn.Secret].
+type ZKSecret = zkauthn.Secret
+
+type ZKCircuit = zkauthn.Circuit
+type ZKVerifyingKey = zkauthn.VerifyingKey
+type ZKProvingKey = zkauthn.ProvingKey
+type ZKKnowledgeCircuit = zkauthn.KnowledgeCircuit
+type ZKMembershipCircuit = zkauthn.MembershipCircuit
+type ZKKnowledgeWitness = zkauthn.KnowledgeWitness
+type ZKMembershipWitness = zkauthn.MembershipWitness
+type ZKMembershipPublic = zkauthn.MembershipPublic
+type ZKClaimKind = zkauthn.ClaimKind
+type ZKClaim = zkauthn.Claim
+type ZKVerifiedClaim = zkauthn.VerifiedClaim
+type ZKOptions = zkauthn.Options
+type ZKService = zkauthn.ZK
+type ZKCredential = zkauthn.Credential
+type ZKMerklePath = zkauthn.MerklePath
+type ZKKnowledgeRequest = zkauthn.KnowledgeRequest
+type ZKMembershipRequest = zkauthn.MembershipRequest
+type ZKClaims = zkauthz.Claims
+
 // The AuthLevel values, re-exported so a consumer need not import authz for a switch.
 const (
-	LevelAnonymous     = authz.LevelAnonymous
-	LevelAuthenticated = authz.LevelAuthenticated
+	LevelAnonymous          = authz.LevelAnonymous
+	LevelAuthenticated      = authz.LevelAuthenticated
+	ZKCircuitKnowledge      = zkauthn.CircuitKnowledge
+	ZKCircuitMembership     = zkauthn.CircuitMembership
+	ZKClaimRecurring        = zkauthn.ClaimRecurring
+	ZKClaimOneShot          = zkauthn.ClaimOneShot
+	ZKMerkleDepth           = zkauthn.MerkleDepth
+	ZKSecretSize            = zkauthn.SecretSize
+	ZKKnowledgeConstraints  = zkauthn.KnowledgeConstraints
+	ZKMembershipConstraints = zkauthn.MembershipConstraints
+	ZKKnowledgeCircuitID    = zkauthn.KnowledgeCircuitID
+	ZKMembershipCircuitID   = zkauthn.MembershipCircuitID
 )
 
 // From @notice Returns the caller, and whether there is one. See [authz.From].
@@ -422,3 +516,41 @@ func PresentError(ctx context.Context, err error) *gqlerror.Error {
 
 // ValidatePassword @notice Applies the password policy. See [authn.ValidatePassword].
 func ValidatePassword(password string) error { return authn.ValidatePassword(password) }
+
+// SetupZK @notice Runs setup for one kal ZK circuit. See [zkauthn.Setup].
+func SetupZK(kind ZKCircuit, pkw, vkw io.Writer) error { return zkauthn.Setup(kind, pkw, vkw) }
+
+func LoadZKVerifyingKey(kind ZKCircuit, r io.Reader, wantSHA256 []byte) (*ZKVerifyingKey, error) {
+	return zkauthn.LoadVerifyingKey(kind, r, wantSHA256)
+}
+
+func LoadZKProvingKey(kind ZKCircuit, r io.Reader) (*ZKProvingKey, error) {
+	return zkauthn.LoadProvingKey(kind, r)
+}
+
+func ZKCircuitInfo(kind ZKCircuit) (int, [32]byte, error) { return zkauthn.CircuitInfo(kind) }
+func ZKProofSize() int                                    { return zkauthn.ProofSize() }
+func ZKKnowledgeValid(w ZKKnowledgeWitness) bool          { return zkauthn.KnowledgeValid(w) }
+func ZKMembershipValid(w ZKMembershipWitness) bool        { return zkauthn.MembershipValid(w) }
+func ZKKnowledgeCommitment(secret ZKSecret) (ZKField, error) {
+	return zkauthn.KnowledgeCommitment(secret)
+}
+func ZKMembershipCommitment(secret ZKSecret, attribute uint64) (ZKField, error) {
+	return zkauthn.MembershipCommitment(secret, attribute)
+}
+func ZKSingleLeafPath(commitment ZKField) (ZKMerklePath, error) {
+	return zkauthn.SingleLeafPath(commitment)
+}
+func NewZKAudience(deployment, policy, epoch string) ZKField {
+	return zkauthn.NewAudience(deployment, policy, epoch)
+}
+func NewZK(opts ZKOptions) (*ZKService, error)     { return zkauthn.New(opts) }
+func NewZKClaims(schema string) (*ZKClaims, error) { return zkauthz.New(schema) }
+func ZKNullifier(secret ZKSecret, audience ZKField) (ZKField, error) {
+	return zkauthn.Nullifier(secret, audience)
+}
+func ZKChallengeField(token string) (ZKField, error) { return zkauthn.ChallengeField(token) }
+func ZKMembershipWitnessFor(credential ZKCredential, path ZKMerklePath, claim ZKClaim,
+	nullifier, challenge ZKField) ZKMembershipWitness {
+	return zkauthn.MembershipWitnessFor(credential, path, claim, nullifier, challenge)
+}

@@ -35,6 +35,8 @@ const (
 var defaultSensitiveFields = []string{
 	"login", "register", "requestPasswordReset", "resetPassword",
 	"verifyEmail", "acceptInvite", "changePassword",
+	"enrollZKKnowledge", "verifyZKKnowledge", "zkLogin", "proveZKClaim",
+	"issueZKCredential", "revokeZKCredential",
 }
 
 // guard @notice A gqlgen OperationInterceptor that rejects abusive documents before any
