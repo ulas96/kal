@@ -51,6 +51,18 @@ type AccountsOptions struct {
 	// Schema @notice Optional Postgres schema holding the auth_* tables.
 	Schema string
 
+	// SecretShape @notice What a submitted secret must look like. Nil means [ValidatePassword].
+	//
+	// @dev The seam client-side encryption needs: with it enabled the server never sees a
+	// password, so the value arriving in the password field is 32 bytes of derived entropy and a
+	// password policy is both meaningless and wrong. Set to e2ee.ValidateAuthSecret, this rejects
+	// a client that still sends the raw password — which would otherwise log in successfully over
+	// a vault that then never opens, with nothing erroring and nothing logged.
+	//
+	// A function field rather than an interface: there is one implementation of each shape and
+	// kal's existing seams of this kind (Config.ClientIP, Config.AllowIntrospection) are funcs.
+	SecretShape func(string) error
+
 	// AllowUnverifiedLogin @notice Lets an account log in before its email is verified. Off by
 	// default: the zero configuration requires verification, and turning this on is a visible,
 	// named decision rather than a mode.
@@ -70,6 +82,7 @@ type Accounts struct {
 	mailer          Mailer
 	baseURL         string
 	cookieName      string
+	secretShape     func(string) error
 	allowUnverified bool
 	sql             statements
 }
@@ -92,10 +105,14 @@ func NewAccounts(opts AccountsOptions) (*Accounts, error) {
 		mailer:          opts.Mailer,
 		baseURL:         strings.TrimRight(opts.BaseURL, "/"),
 		cookieName:      opts.CookieName,
+		secretShape:     opts.SecretShape,
 		allowUnverified: opts.AllowUnverifiedLogin,
 	}
 	if a.cookieName == "" {
 		a.cookieName = session.DefaultCookieName
+	}
+	if a.secretShape == nil {
+		a.secretShape = ValidatePassword
 	}
 	prefix := ""
 	if opts.Schema != "" {
@@ -273,7 +290,7 @@ func (a *Accounts) ChangePassword(ctx context.Context, db orm.DB, current, next 
 	if err != nil {
 		return err
 	}
-	if err := ValidatePassword(next); err != nil {
+	if err := a.secretShape(next); err != nil {
 		return err
 	}
 

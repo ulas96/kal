@@ -58,7 +58,7 @@ func (a *Accounts) Register(ctx context.Context, db orm.DB, email, password stri
 	if email == "" || !strings.Contains(email, "@") {
 		return &kalerr.Error{Code: kalerr.CodeInvalidInput, Message: "a valid email address is required"}
 	}
-	if err := ValidatePassword(password); err != nil {
+	if err := a.secretShape(password); err != nil {
 		return err
 	}
 
@@ -168,7 +168,7 @@ func (a *Accounts) RequestPasswordReset(ctx context.Context, db orm.DB, email st
 // @param password the replacement; policy-checked here
 // @return error   INVALID_TOKEN for invalid, expired or already-used, INVALID_INPUT for policy
 func (a *Accounts) ResetPassword(ctx context.Context, db orm.DB, token, password string) error {
-	if err := ValidatePassword(password); err != nil {
+	if err := a.secretShape(password); err != nil {
 		return err
 	}
 	userID, err := a.consume(ctx, db, token, PurposeReset)
@@ -262,7 +262,7 @@ func (a *Accounts) Invite(ctx context.Context, db orm.DB, email string) (string,
 // @param password the first password; policy-checked here
 // @return error   INVALID_TOKEN or INVALID_INPUT
 func (a *Accounts) AcceptInvite(ctx context.Context, db orm.DB, token, password string) error {
-	if err := ValidatePassword(password); err != nil {
+	if err := a.secretShape(password); err != nil {
 		return err
 	}
 	userID, err := a.consume(ctx, db, token, PurposeInvite)
