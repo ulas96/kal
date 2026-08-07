@@ -27,6 +27,19 @@ will be listed here under **Changed** with the migration in one line.
 - `kalerr.CodeConflict`, returned by `Vaults.Put` when a concurrent re-wrap got there first. The
   first code in the vocabulary that is not an authentication failure.
 - `docs/gotchas.md` gains a *Client-side encryption* section, entries 64–78.
+- `docs/e2ee-test-cases.md`: the security test register for `e2ee` — 120 cases in twelve groups and a
+  36-row mutation matrix naming the case each mutation must turn red. Thirteen entries under
+  `[UNSPECIFIED]` are findings against the design documents rather than against the code, the first
+  being that `docs/e2ee-client.md` claims kal validates the blob's version and algorithm bytes when
+  it validates only the length.
+- The register implemented: `tests/e2ee_test.go` and `tests/e2ee_db_test.go` cite 119 of the 120
+  cases, and `tests/e2ee_case_manifest_test.go` pins the reconciliation so the uncovered count can
+  only fall by writing a test. The nine `[UNSPECIFIED]` cases assert today's behaviour and name the
+  §17 finding they pin, so closing a finding breaks a test rather than passing silently. Three cases
+  carry a disposition instead of full coverage: `E2EE-ISO-002` (mutation M-30 cannot live in the
+  tree it mutates), `E2EE-DOC-005` (a review checklist, which the register says a code test would
+  falsely pass) and `E2EE-SHM-001` (already compile-time in `tests/kal_test.go`).
+
 ### Changed
 
 - `authn.AccountsOptions` gains `SecretShape func(string) error`. Nil keeps today's behaviour
