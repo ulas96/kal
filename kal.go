@@ -21,12 +21,15 @@
 //
 // # The packages
 //
-// This package re-exports the four below, so the common case needs one import:
+// This package re-exports the ones below, so the common case needs one import:
 //
 //	[github.com/ulas96/kal/authn]      passwords, registration, login, recovery
 //	[github.com/ulas96/kal/authz]      Principal, @auth, Scope, coverage, RLS
 //	[github.com/ulas96/kal/session]    sessions, the cookie, the middleware, the JWT leg
 //	[github.com/ulas96/kal/kalerr]     the error contract
+//	[github.com/ulas96/kal/zkauthn]    Groth16 knowledge and membership proofs
+//	[github.com/ulas96/kal/zkauthz]    request-local proven claims
+//	[github.com/ulas96/kal/e2ee]       client-side encryption, which kal cannot undo
 //	[github.com/ulas96/kal/migrations] the schema, as .sql behind an embed.FS
 //
 // The types below are aliases, not copies, so the two spellings are interchangeable. The cost,
@@ -69,6 +72,7 @@ import (
 
 	"github.com/ulas96/kal/authn"
 	"github.com/ulas96/kal/authz"
+	"github.com/ulas96/kal/e2ee"
 	"github.com/ulas96/kal/kalerr"
 	"github.com/ulas96/kal/session"
 	"github.com/ulas96/kal/zkauthn"
@@ -191,6 +195,16 @@ type Config struct {
 	// ZK @notice Optional zero-knowledge MFA, membership login and proven claims. Nil keeps
 	// today's authentication and dependency behavior at runtime.
 	ZK *ZKConfig
+
+	// E2EE @notice Optional client-side encryption. Nil keeps today's posture exactly: no vault,
+	// and nothing about authn changes.
+	//
+	// @dev Non-nil *tightens* the accepted secret from an 8–64 character password to 32 bytes of
+	// derived entropy, so this does not weaken the zero Config. What it removes is the server's
+	// ability to judge password strength, which is a consequence of never seeing a password and is
+	// documented as gotcha 76 rather than papered over. Schema is taken from TableSchema and
+	// whatever is set here is ignored.
+	E2EE *e2ee.Options
 }
 
 // Auth @notice Everything kal exposes to an application, wired and validated.
@@ -207,6 +221,8 @@ type Auth struct {
 	JWT *session.JWT
 	// ZK @notice The optional proof and credential service. Nil unless Config.ZK was set.
 	ZK *zkauthn.ZK
+	// Vaults @notice The optional client-encryption vault. Nil unless Config.E2EE was set.
+	Vaults *e2ee.Vaults
 
 	db       *pg.DB
 	cfg      Config
@@ -245,6 +261,21 @@ func New(cfg Config) (*Auth, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Built before Accounts rather than beside ZK below, because enabling it changes what Accounts
+	// will accept as a secret — and a pepper that fails validation must fail here, not after the
+	// credential flows have been wired to expect derived secrets they will never receive.
+	var vaults *e2ee.Vaults
+	var secretShape func(string) error
+	if cfg.E2EE != nil {
+		// A copy: the schema is kal's to decide, and honouring a second one set here would let the
+		// vault and the users it joins against live in different schemas.
+		vaultOpts := *cfg.E2EE
+		vaultOpts.Schema = cfg.TableSchema
+		if vaults, err = e2ee.NewVaults(vaultOpts); err != nil {
+			return nil, err
+		}
+		secretShape = e2ee.ValidateAuthSecret
+	}
 	accounts, err := authn.NewAccounts(authn.AccountsOptions{
 		Hasher:               hasher,
 		Sessions:             sessions,
@@ -252,6 +283,7 @@ func New(cfg Config) (*Auth, error) {
 		BaseURL:              cfg.BaseURL,
 		CookieName:           cfg.CookieName,
 		Schema:               cfg.TableSchema,
+		SecretShape:          secretShape,
 		AllowUnverifiedLogin: cfg.AllowUnverifiedLogin,
 	})
 	if err != nil {
@@ -263,7 +295,7 @@ func New(cfg Config) (*Auth, error) {
 	}
 
 	a := &Auth{
-		Sessions: sessions, Accounts: accounts, Roles: roles, Hasher: hasher,
+		Sessions: sessions, Accounts: accounts, Roles: roles, Hasher: hasher, Vaults: vaults,
 		db: cfg.DB, cfg: cfg,
 		mwOpts: session.MiddlewareOptions{CookieName: cfg.CookieName, ClientIP: cfg.ClientIP},
 	}
@@ -466,6 +498,28 @@ type ZKKnowledgeRequest = zkauthn.KnowledgeRequest
 type ZKMembershipRequest = zkauthn.MembershipRequest
 type ZKClaims = zkauthz.Claims
 
+// VaultParams @notice One account's client-side KDF parameters. See [e2ee.Params].
+//
+// @dev Not kal.Params: that name is [authn.Params], the server's Argon2id cost, and the two must
+// never be confused for each other — they answer to different limits and feeding one from the
+// other is how a deployment ends up with vaults nobody can open. Same renaming as SessionInfo.
+type VaultParams = e2ee.Params
+
+// VaultOptions @notice Configuration for the vault service. See [e2ee.Options].
+type VaultOptions = e2ee.Options
+
+// Vault @notice One user's wrapped root key, opaque to kal. See [e2ee.Vault].
+type Vault = e2ee.Vault
+
+// Vaults @notice The vault service. See [e2ee.Vaults].
+type Vaults = e2ee.Vaults
+
+// The client KDF names, re-exported so a consumer need not import e2ee to switch on one.
+const (
+	KDFArgon2id = e2ee.KDFArgon2id
+	KDFPBKDF2   = e2ee.KDFPBKDF2
+)
+
 // The AuthLevel values, re-exported so a consumer need not import authz for a switch.
 const (
 	LevelAnonymous          = authz.LevelAnonymous
@@ -516,6 +570,19 @@ func PresentError(ctx context.Context, err error) *gqlerror.Error {
 
 // ValidatePassword @notice Applies the password policy. See [authn.ValidatePassword].
 func ValidatePassword(password string) error { return authn.ValidatePassword(password) }
+
+// ValidateAuthSecret @notice Applies the client-derived secret's shape. See
+// [e2ee.ValidateAuthSecret].
+func ValidateAuthSecret(s string) error { return e2ee.ValidateAuthSecret(s) }
+
+// NewRecoveryCode @notice Mints a vault recovery code, shown once. See [e2ee.NewRecoveryCode].
+func NewRecoveryCode() (string, error) { return e2ee.NewRecoveryCode() }
+
+// NewVaults @notice Builds the vault service directly. See [e2ee.NewVaults].
+//
+// @dev [New] does this for you from Config.E2EE; this is for a consumer wiring the packages
+// separately.
+func NewVaults(opts VaultOptions) (*Vaults, error) { return e2ee.NewVaults(opts) }
 
 // SetupZK @notice Runs setup for one kal ZK circuit. See [zkauthn.Setup].
 func SetupZK(kind ZKCircuit, pkw, vkw io.Writer) error { return zkauthn.Setup(kind, pkw, vkw) }

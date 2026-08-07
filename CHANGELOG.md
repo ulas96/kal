@@ -8,6 +8,46 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 While the major version is `0`, the public API may change in a minor release. Every such change
 will be listed here under **Changed** with the migration in one line.
 
+## [Unreleased]
+
+### Added
+
+- Optional `e2ee` package: one wrapped root key per user, the per-user client KDF parameters that
+  produced it, and a pre-auth `Params` query that answers for every address whether or not it has
+  an account. Enabled with `Config.E2EE`; `Auth.Vaults` is nil without it. Adds no dependency —
+  `crypto/hmac` and `crypto/sha256` are the whole crypto surface, because a package that can
+  decrypt is not doing client-side encryption. `TestE2EEImportGraph` pins that as an allowlist over
+  the package's own imports.
+- `migrations/0003_e2ee.sql`: `auth_e2ee_vaults`, one row per user. No core table is altered.
+- `docs/e2ee-client.ts` and `docs/e2ee-client.md`: the pinned wire format and derivation, as a
+  reference to copy rather than a package to install. `README.md` gains *Operating the E2EE
+  module*, which states plainly that browser-delivered E2EE does not defend against the server that
+  serves the JavaScript, and what enabling it costs — no search, no server-side features, and a
+  forgotten password that loses the data.
+- `kalerr.CodeConflict`, returned by `Vaults.Put` when a concurrent re-wrap got there first. The
+  first code in the vocabulary that is not an authentication failure.
+- `docs/gotchas.md` gains a *Client-side encryption* section, entries 64–78.
+### Changed
+
+- `authn.AccountsOptions` gains `SecretShape func(string) error`. Nil keeps today's behaviour
+  exactly — it defaults to `ValidatePassword`, and the four flows that check a submitted secret
+  (`Register`, `ResetPassword`, `AcceptInvite`, `ChangePassword`) go through the field instead of
+  calling the function directly. `kal.New` sets it to `e2ee.ValidateAuthSecret` when `Config.E2EE`
+  is non-nil, which tightens the accepted secret from an 8–64 character password to 32 bytes of
+  derived entropy. No migration for anyone not setting `Config.E2EE`.
+
+  That check pins the encoded length at 43 characters before it decodes, because
+  `encoding/base64` skips `\r` and `\n` wherever they appear and `Strict()` governs only padding and
+  trailing bits. Without the length check a trailing newline from a shell heredoc and a `\r\n` from
+  a Windows client both decode to the same 32 bytes, and one key reaches the password column in
+  several forms — the account is hashed over whichever arrived first and the others cannot log in,
+  over a vault that would have opened fine (gotcha 78).
+
+  **Rollout.** Every client that touches the password field must be updated in the same release as
+  `Config.E2EE` — a second frontend, a mobile app, a `curl` in a runbook, a test fixture. The shape
+  check turns a missed one into a login failure rather than a login that succeeds over a vault that
+  then never opens, which is the right failure, and it is still a failure. Plan for it.
+
 ## [0.2.0] - 2026-08-06
 
 ### Added

@@ -52,6 +52,10 @@ const (
 	// CodeInvalidProof @notice Any malformed, expired, replayed or unsatisfied ZK proof.
 	// Deliberately unspecific so enrolment, roots and policy state are not enumerable.
 	CodeInvalidProof = "INVALID_PROOF"
+	// CodeConflict @notice A compare-and-swap write lost to a concurrent one. The only code here
+	// that is not an authentication failure, so it says what happened rather than hiding it: the
+	// caller read a version, someone else wrote first, and re-reading and retrying is the fix.
+	CodeConflict = "CONFLICT"
 )
 
 // Error @notice A client-visible auth error with a stable machine-readable code.

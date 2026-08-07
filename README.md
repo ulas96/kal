@@ -174,6 +174,7 @@ list — never `*` with credentials.
 | `kalerr` | the error contract |
 | `zkauthn` | Groth16/BN254 knowledge and membership proofs, the credential tree, pseudonymous login |
 | `zkauthz` | request-local proven claims behind `@auth(proves:)` |
+| `e2ee` | the client-side encryption vault: per-user KDF parameters and one wrapped key kal cannot open |
 | `migrations` | the schema, as `.sql` behind an `embed.FS` |
 | `tests` | every test, outside the packages it exercises |
 
@@ -235,6 +236,39 @@ deliberately not joined to the account that received it, so soft-deleting a user
 live and they can still log in under a fresh pseudonym for any audience they have not used.
 `RevokeCredentialsForUser` is the operation that revokes it, and calling it is a deployment
 decision kal does not make for you.
+
+## Operating the E2EE module
+
+Browser-delivered end-to-end encryption does not protect against the server that serves the
+JavaScript. An operator who wants the plaintext ships one line of JS to one user and has their
+master key on the next page load, and no amount of care in this Go package changes that. Anyone
+who tells you otherwise is selling something. A consumer who deploys this believing it defends
+against their own server has deployed the wrong control, and the failure mode is that they *stop*
+doing the thing that would have worked.
+
+The honest claim is: **kal cannot read your data, and neither can anyone who reads your database.**
+That claim is true, it is worth a lot, and it is the only one to make. A stolen dump, a stolen
+backup, a compromised replica, a subpoenaed snapshot and a curious operator all yield ciphertext
+plus a per-user Argon2id-wrapped key.
+
+**What it costs.** Forgetting the password means losing the data — that is not a bug to be fixed
+later, it is the property. Encrypted columns cannot be indexed, sorted, filtered or full-text
+searched, and a blind index that restores equality lookup is an offline dictionary oracle on any
+low-entropy field, which is most of the fields anyone wants to encrypt. Server-side features that
+read user data — digest emails, admin support tooling, analytics, a report generator — stop
+working, permanently. And kal can no longer enforce a password policy, because it no longer sees a
+password. Each of these is a product decision wearing a technical costume, and each belongs in your
+own README before a line is written.
+
+**The client is yours.** kal ships `docs/e2ee-client.ts` and `docs/e2ee-client.md` as a reference
+to copy, not a package to install — the format is pinned, so there is no version to keep in sync.
+Every client that touches the password field must be updated in the same release as `Config.E2EE`.
+`ValidateAuthSecret` turns a missed one into a login failure rather than a login that succeeds over
+a vault that then never opens, which is the right failure, but it is still a failure.
+
+**Encryption is not authorization.** A ciphertext row is still a row with an owner and still needs
+`kal.Scope(ctx, "owner_id")`. The two controls are orthogonal and each fails open with respect to
+the other.
 
 ## Development
 

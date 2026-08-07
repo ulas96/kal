@@ -24,6 +24,7 @@ import (
 	"github.com/ulas96/kal"
 	"github.com/ulas96/kal/authn"
 	"github.com/ulas96/kal/authz"
+	"github.com/ulas96/kal/e2ee"
 	"github.com/ulas96/kal/kalerr"
 	"github.com/ulas96/kal/session"
 	"github.com/ulas96/kal/zkauthn"
@@ -134,6 +135,27 @@ var (
 	_, _ zkRevokeFn = (*kal.ZKService).RevokeCredential, (*zkauthn.ZK).RevokeCredential
 	_, _ zkClaimFn  = (*kal.ZKService).Claim, (*zkauthn.ZK).Claim
 	_, _ zkProofsFn = (*kal.ZKClaims).Proofs, (*zkauthz.Claims).Proofs
+
+	// The e2ee surface. kal.VaultParams is the renamed one — kal.Params is authn's Argon2id cost,
+	// and the two answer to entirely different limits, so the collision is resolved by renaming
+	// rather than by hoping nobody passes one where the other belongs.
+	_ e2ee.Params      = kal.VaultParams{}
+	_ kal.VaultParams  = e2ee.Params{}
+	_ e2ee.Options     = kal.VaultOptions{}
+	_ kal.VaultOptions = e2ee.Options{}
+	_ e2ee.Vault       = kal.Vault{}
+	_ kal.Vault        = e2ee.Vault{}
+	_ *e2ee.Vaults     = &kal.Vaults{}
+	_ *kal.Vaults      = &e2ee.Vaults{}
+
+	_, _ validateSecretFn = kal.ValidateAuthSecret, e2ee.ValidateAuthSecret
+	_, _ recoveryCodeFn   = kal.NewRecoveryCode, e2ee.NewRecoveryCode
+	_, _ newVaultsFn      = kal.NewVaults, e2ee.NewVaults
+
+	_, _ vaultParamsFn  = (*kal.Vaults).Params, (*e2ee.Vaults).Params
+	_, _ vaultGetFn     = (*kal.Vaults).Get, (*e2ee.Vaults).Get
+	_, _ vaultPutFn     = (*kal.Vaults).Put, (*e2ee.Vaults).Put
+	_, _ vaultDiscardFn = (*kal.Vaults).Discard, (*e2ee.Vaults).Discard
 )
 
 // TestZKReExportedConstants checks the values the type assertions above cannot.
@@ -201,7 +223,26 @@ type (
 	zkRevokeFn = func(*zkauthn.ZK, context.Context, orm.DB, uint32) error
 	zkClaimFn  = func(*zkauthn.ZK, context.Context, orm.DB, string) (zkauthn.Claim, error)
 	zkProofsFn = func(*zkauthz.Claims, context.Context, []string) error
+
+	validateSecretFn = func(string) error
+	recoveryCodeFn   = func() (string, error)
+	newVaultsFn      = func(e2ee.Options) (*e2ee.Vaults, error)
+
+	vaultParamsFn  = func(*e2ee.Vaults, context.Context, orm.DB, string) (e2ee.Params, error)
+	vaultGetFn     = func(*e2ee.Vaults, context.Context, orm.DB) (*e2ee.Vault, error)
+	vaultPutFn     = func(*e2ee.Vaults, context.Context, orm.DB, e2ee.Vault) error
+	vaultDiscardFn = func(*e2ee.Vaults, context.Context, orm.DB) error
 )
+
+// TestE2EEReExportedConstants checks the values the type assertions above cannot — a re-exported
+// const is a fresh declaration, and a stale copy of a KDF name here would have kal writing a `kdf`
+// column no client knows how to read.
+func TestE2EEReExportedConstants(t *testing.T) {
+	if kal.KDFArgon2id != e2ee.KDFArgon2id || kal.KDFPBKDF2 != e2ee.KDFPBKDF2 {
+		t.Errorf("KDF names drifted: %q/%q, %q/%q",
+			kal.KDFArgon2id, e2ee.KDFArgon2id, kal.KDFPBKDF2, e2ee.KDFPBKDF2)
+	}
+}
 
 // newTestConfig @notice A minimal valid Config.
 func newTestConfig(db *pg.DB) kal.Config {
@@ -234,6 +275,43 @@ func TestConfigValidation(t *testing.T) {
 		}
 		if auth.JWT != nil {
 			t.Error("the JWT leg is on without an issuer — it must be opt-in")
+		}
+		if auth.Vaults != nil {
+			t.Error("the vault is on without Config.E2EE — it must be opt-in")
+		}
+		// With E2EE off, the password policy is still the password policy. If enabling the vault
+		// leaked its shape check into the default build, every existing deployment's registration
+		// would start rejecting passwords on upgrade.
+		if err := auth.Accounts.Register(context.Background(), db, "shape@example.test", "short"); err == nil {
+			t.Error("an eight-character policy accepted a five-character password")
+		}
+	})
+
+	t.Run("E2EE tightens the accepted secret", func(t *testing.T) {
+		cfg := newTestConfig(db)
+		cfg.E2EE = &kal.VaultOptions{Pepper: make([]byte, 32)}
+		auth, err := kal.New(cfg)
+		if err != nil {
+			t.Fatalf("New: %v", err)
+		}
+		if auth.Vaults == nil {
+			t.Fatal("Config.E2EE is set and Auth.Vaults is nil")
+		}
+		// The single most likely way to break a deployment of this feature: one un-updated client
+		// still sending the raw password logs in fine, and the vault silently never opens. The
+		// registration path must refuse it before the account exists.
+		err = auth.Accounts.Register(context.Background(), db, "raw@example.test", "a perfectly good password")
+		var ae *kalerr.Error
+		if !errors.As(err, &ae) || ae.Code != kalerr.CodeInvalidInput {
+			t.Errorf("Register with a raw password: error = %v, want INVALID_INPUT", err)
+		}
+	})
+
+	t.Run("E2EE without a pepper does not construct", func(t *testing.T) {
+		cfg := newTestConfig(db)
+		cfg.E2EE = &kal.VaultOptions{}
+		if _, err := kal.New(cfg); err == nil {
+			t.Error("New accepted an E2EE config with no pepper — a generated one differs per replica")
 		}
 	})
 

@@ -268,3 +268,69 @@ session issuance with a zero `Meta`; this is deliberately not configurable.
 
 **63 · A fast "no commitment enrolled" path is an enrolment oracle.** Knowledge verification uses
 one public error and performs a real dummy pairing check while holding the same semaphore slot.
+
+## Client-side encryption
+
+**64 · The server that serves the JavaScript can serve JavaScript that exfiltrates the key.**
+Browser E2EE defends against a database leak and an honest-but-curious operator. It does not defend
+against the operator. A consumer who believes otherwise has skipped the control that would have
+worked.
+
+**65 · A raw password accepted where an auth secret was expected.** Login succeeds, the vault never
+opens, and nothing anywhere errors or logs. One un-updated client does this to real users, which is
+why `ValidateAuthSecret` is a shape check and not a hint.
+
+**66 · Argon2's `parallelism` must be pinned on the client too.** kal pins `p=1` server-side for
+cost predictability (gotcha 28); the client pins it because `p` changes the output. A browser that
+picks `p` from the thread pool derives a different key on a laptop than on a phone, and the second
+device reports a corrupt vault.
+
+**67 · KDF parameters must be stored per user, not read from config at derive time.** Raise the
+default memory cost and every existing vault becomes unopenable, with a working login and no error.
+
+**68 · A random decoy salt for an unknown address is an enumeration oracle.** Call twice: the decoy
+moves, the real salt does not. Both come from one HMAC over the pepper, so they are
+indistinguishable by construction rather than by care.
+
+**69 · Rate-limiting the params query through `auth_login_attempts` locks accounts out.** The table
+is the login backoff; feeding it from an unauthenticated pre-auth endpoint lets anyone lock any
+account by repeatedly asking for its salt. Rate-limit at the edge, not through the auth counter.
+
+**70 · AES-GCM without AAD lets ciphertext move between rows.** Anyone who can write the column can
+swap two of the user's own encrypted fields, and the client decrypts both. Resource, record id and
+owner are bound into the AAD, and the reference client binds the wrapped data key the same way.
+
+**71 · Nonce reuse under one key is a total GCM break, not a degradation.** A single vault key over
+every record with a random 96-bit nonce reaches the birthday bound; a collision leaks both
+plaintexts and the authentication key. Per-record DEKs.
+
+**72 · An encrypted column cannot be indexed, sorted, filtered or searched.** A blind index restores
+equality lookup and is an offline dictionary oracle on any low-entropy field, which is most of the
+fields anyone wants to encrypt.
+
+**73 · Encryption is not authorization.** A ciphertext row still needs `Scope`. The two controls
+fail open with respect to each other, and "it's encrypted" reads like a reason to skip the `WHERE`
+clause.
+
+**74 · A vault whose password changed underneath it reads as a live vault.** Without the
+`wrapped_for` fingerprint the client receives a key it cannot possibly open and fails somewhere far
+from the cause. The write and the staleness read compute that fingerprint from one shared SQL
+expression, because two copies that drift make every vault in the deployment read as stale forever.
+
+**75 · WebCrypto has no Argon2id.** The native option is PBKDF2, which is GPU-cheap, so a client
+written against "what the browser has" produces a weak wrapping key by default. `kdf` is a stored
+per-user column so moving a user off it is a re-wrap on their next login, not a migration.
+
+**76 · Enabling E2EE removes the server's ability to enforce a password policy.** It never sees a
+password. Client-side strength checks are advisory against anyone who can call the API directly.
+
+**77 · An unbounded vault blob is free storage for any authenticated caller.** `MaxBlob` is checked
+before the insert.
+
+**78 · `base64.Strict()` does not reject whitespace.** `encoding/base64` skips `\r` and `\n`
+wherever they appear in the input, and `Strict()` governs padding and trailing bits only — so a
+strict decode of a 32-byte auth secret accepts the trailing newline a shell heredoc adds, a `\r\n`
+from a Windows client, and a newline in the middle. Each is a distinct string reaching the password
+column and a distinct Argon2id hash over one key, so the account is hashed over whichever form
+arrived first and the other one fails to log in, with a vault that would have opened fine.
+`ValidateAuthSecret` pins the encoded length at 43 characters before it decodes.
