@@ -80,6 +80,13 @@ case-sensitive comparison when the extension's schema is not on `search_path` �
 `admin@x.com` become two accounts with no error anywhere. An expression index on `lower(email)` has no
 extension dependency (which also matters on RDS, Cloud SQL and Neon) and no `search_path` hazard.
 
+**80 · `Auth.Migrate` ignores `Config.TableSchema`.** The migration files are deliberately
+unqualified and the DDL runs on the connection's `search_path`, so `TableSchema: "tenant_a"` plus
+`Migrate` on a default connection creates the tables in `public` and every query then looks for
+them in `tenant_a`. That case fails loudly. The one that does not is a provisioning loop whose
+`search_path` and `TableSchema` drift apart: one tenant's auth tables are created in another
+tenant's schema, and nothing errors. `MigrateSchema` takes the name so the two cannot disagree.
+
 ## gqlgen
 
 **16 · Denying a request inside an extension requires `graphql.OneShot`.** gqlgen's own source warns

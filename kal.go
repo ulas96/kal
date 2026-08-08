@@ -466,9 +466,30 @@ func (a *Auth) Directive() func(context.Context, any, graphql.Resolver, AuthLeve
 // feed it [migrations.FS] instead. Each file is idempotent only in the sense that a second run
 // fails loudly on the existing tables rather than corrupting them.
 //
+// The DDL runs on the connection's search_path and this method ignores Config.TableSchema, which
+// is correct for one application and a footgun for a fan-out loop. Use [Auth.MigrateSchema] for
+// the multi-schema case; gotcha 80 is what happens otherwise.
+//
 // @param ctx the context for the statements
 // @return error the first failure, naming the file
 func (a *Auth) Migrate(ctx context.Context) error { return migrate(ctx, a.db) }
+
+// MigrateSchema @notice Applies every embedded migration into the named schema, creating it if
+// it does not exist.
+//
+// @dev [Auth.Migrate] runs the DDL on the connection's search_path, which is correct for a single
+// application and a footgun for a fan-out loop: the caller must keep search_path and
+// Config.TableSchema in agreement across N iterations, and a mismatch provisions one tenant's
+// auth tables into another tenant's schema with no error at all. Taking the name here makes the
+// two agree by construction. Still not a migration framework — no version table, no down
+// migrations, no locking.
+//
+// @param ctx    the context for the statements
+// @param schema the Postgres schema to create and migrate into; must match ^[a-z_][a-z0-9_]*$
+// @return error the first failure, naming the file or the schema
+func (a *Auth) MigrateSchema(ctx context.Context, schema string) error {
+	return migrateSchema(ctx, a.db, schema)
+}
 
 // WithRLS @notice Runs fn in a transaction whose Postgres session variables carry the caller.
 // See [authz.WithRLS] for the four ways an RLS deployment breaks silently.
