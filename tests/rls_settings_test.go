@@ -187,3 +187,55 @@ func TestWithRLSSettingsRejectsBadKey(t *testing.T) {
 		t.Errorf("a valid key was rejected as INVALID_INPUT: %v", err)
 	}
 }
+
+// TestDBWithRLSSettingsCannotOverrideThePrincipal @notice An extra setting may not name
+// app.user_id or app.roles.
+//
+// @dev Both match settingKeyRe, and both sort after the two the function writes itself — so
+// before this was rejected, the extras landed later in the same select list and won. The failure
+// is the worst shape this package has: a Config.RLSSettings hook that returns app.user_id (a
+// copied example, a tenancy scheme that happens to key on the user) silently replaces the
+// caller's identity for every policy in the transaction, from inside the one function whose whole
+// job is to be the layer that survives a forgotten check. Nothing errors and every policy still
+// "works".
+//
+// The assertion is the thing that goes wrong, not the error: the callback must not run, and the
+// transaction must never have been opened with an identity the caller did not have.
+//
+// @param t the test handle
+func TestDBWithRLSSettingsCannotOverrideThePrincipal(t *testing.T) {
+	db := testDB(t)
+	ctx := authz.WithPrincipal(context.Background(),
+		&authz.Principal{UserID: "real-user", Roles: []string{"member"}})
+
+	for _, key := range []string{"app.user_id", "app.roles"} {
+		t.Run(key, func(t *testing.T) {
+			var sawUser, sawRoles string
+			err := authz.WithRLSSettings(ctx, db, map[string]string{key: "attacker"},
+				func(tx orm.DB) error {
+					sawUser = currentSetting(t, tx, "app.user_id")
+					sawRoles = currentSetting(t, tx, "app.roles")
+					return nil
+				})
+			var ae *kalerr.Error
+			if !errors.As(err, &ae) || ae.Code != kalerr.CodeInvalidInput {
+				t.Errorf("WithRLSSettings(%q): err = %v, want INVALID_INPUT", key, err)
+			}
+			if sawUser != "" || sawRoles != "" {
+				t.Errorf("the callback ran with app.user_id = %q, app.roles = %q — an extra setting reached the transaction and the policy read an identity the caller does not have",
+					sawUser, sawRoles)
+			}
+		})
+	}
+
+	// The control: the built-ins still carry the real principal when no extra tries to shadow them.
+	if err := authz.WithRLSSettings(ctx, db, map[string]string{"app.org_id": "org-1"},
+		func(tx orm.DB) error {
+			if got := currentSetting(t, tx, "app.user_id"); got != "real-user" {
+				t.Errorf("app.user_id = %q, want real-user", got)
+			}
+			return nil
+		}); err != nil {
+		t.Fatalf("WithRLSSettings with an ordinary extra: %v", err)
+	}
+}

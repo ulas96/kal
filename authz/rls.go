@@ -73,6 +73,15 @@ func WithRLS(ctx context.Context, db *pg.DB, fn func(orm.DB) error) error {
 // backend behaviour for the rest of the transaction.
 var settingKeyRe = regexp.MustCompile(`^app\.[a-z_][a-z0-9_]*$`)
 
+// reservedSettings @notice The two names [WithRLSSettings] writes from the caller.
+//
+// @dev Rejected rather than merged or ignored. Both match settingKeyRe and both sort after the
+// built-ins in the same select list, so an extra naming one of them is evaluated last and wins:
+// the policy then reads an identity the caller does not have, from inside the function whose
+// whole job is to be the layer that survives a forgotten check. Nothing errors and every policy
+// still appears to work, which is the only kind of failure this package treats as urgent.
+var reservedSettings = map[string]bool{"app.user_id": true, "app.roles": true}
+
 // WithRLSSettings @notice [WithRLS], plus consumer settings on the same transaction.
 //
 // @dev Read WithRLS's doc comment first; all four of its traps apply here unchanged. This exists
@@ -85,12 +94,17 @@ var settingKeyRe = regexp.MustCompile(`^app\.[a-z_][a-z0-9_]*$`)
 // policy reads, which is a policy that silently matches nothing or, worse, silently matches
 // everything.
 //
+// app.user_id and app.roles are refused; see [reservedSettings] for the bypass that allows.
+//
 // Keys are applied in sorted order and in one statement, so the query log shows a stable
 // statement rather than one shape per map iteration.
 //
 // @param ctx   the resolver context, read for the caller
 // @param db    the pool; a transaction is opened on it
-// @param extra settings to set transaction-locally; keys must be app.-prefixed. Nil is WithRLS.
+// @param extra settings to set transaction-locally; keys must be app.-prefixed, and may not be
+//
+//	app.user_id or app.roles. Nil is WithRLS.
+//
 // @param fn    runs with the tx, which it must use for every query the policies should see
 // @return error a rejected key, fn's error, or the transaction's
 func WithRLSSettings(ctx context.Context, db *pg.DB, extra map[string]string,
@@ -106,6 +120,10 @@ func WithRLSSettings(ctx context.Context, db *pg.DB, extra map[string]string,
 		if !settingKeyRe.MatchString(k) {
 			return &kalerr.Error{Code: kalerr.CodeInvalidInput,
 				Message: "RLS setting names must match ^app\\.[a-z_][a-z0-9_]*$"}
+		}
+		if reservedSettings[k] {
+			return &kalerr.Error{Code: kalerr.CodeInvalidInput,
+				Message: "app.user_id and app.roles carry the caller and cannot be set as extras"}
 		}
 		keys = append(keys, k)
 	}
