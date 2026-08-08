@@ -84,12 +84,25 @@ import (
 // @dev The operator supplies both verifying keys from read-only storage and pins their hashes
 // in application source. Proving keys are never loaded by the server or committed with kal.
 type ZKConfig struct {
-	KnowledgeVerifyingKey        io.Reader
-	KnowledgeVerifyingKeySHA256  []byte
-	MembershipVerifyingKey       io.Reader
-	MembershipVerifyingKeySHA256 []byte
-	RootGrace                    time.Duration
-	MaxConcurrentVerifications   int64
+	// KnowledgeVK @notice The knowledge circuit's verifying key, from [LoadZKVerifyingKey].
+	//
+	// @dev A pointer rather than an io.Reader and a hash, so one process running several kal
+	// instances loads and holds one key rather than one per instance.
+	//
+	// The SHA-256 pin has not moved anywhere it can be skipped: [LoadZKVerifyingKey] requires a
+	// 32-byte digest and errors without one, and [ZKVerifyingKey]'s fields are unexported, so it
+	// is the only way to obtain a value of this type. The pin moved one call earlier, into code
+	// the operator writes — it did not become optional. A swapped verifying key is a universal
+	// authentication bypass (gotcha 60), so the obvious-looking later simplification, an
+	// unchecked loader, must not be added.
+	KnowledgeVK *ZKVerifyingKey
+
+	// MembershipVK @notice The membership circuit's verifying key, from [LoadZKVerifyingKey].
+	// Everything in KnowledgeVK's note applies here unchanged.
+	MembershipVK *ZKVerifyingKey
+
+	RootGrace                  time.Duration
+	MaxConcurrentVerifications int64
 }
 
 // Config @notice Assembles kal.
@@ -329,18 +342,11 @@ func New(cfg Config) (*Auth, error) {
 		if err != nil {
 			return nil, err
 		}
-		knowledgeVK, err := zkauthn.LoadVerifyingKey(zkauthn.CircuitKnowledge,
-			cfg.ZK.KnowledgeVerifyingKey, cfg.ZK.KnowledgeVerifyingKeySHA256)
-		if err != nil {
-			return nil, err
-		}
-		membershipVK, err := zkauthn.LoadVerifyingKey(zkauthn.CircuitMembership,
-			cfg.ZK.MembershipVerifyingKey, cfg.ZK.MembershipVerifyingKeySHA256)
-		if err != nil {
-			return nil, err
+		if cfg.ZK.KnowledgeVK == nil || cfg.ZK.MembershipVK == nil {
+			return nil, errors.New("kal: Config.ZK requires both KnowledgeVK and MembershipVK — load them with kal.LoadZKVerifyingKey, which pins each key by SHA-256")
 		}
 		a.ZK, err = zkauthn.New(zkauthn.Options{
-			KnowledgeVK: knowledgeVK, MembershipVK: membershipVK,
+			KnowledgeVK: cfg.ZK.KnowledgeVK, MembershipVK: cfg.ZK.MembershipVK,
 			Sessions: sessions, Hasher: hasher, ProofSink: claims.Add,
 			CookieName: cfg.CookieName, Schema: cfg.TableSchema,
 			RootGrace: cfg.ZK.RootGrace,

@@ -370,6 +370,63 @@ func TestConfigValidation(t *testing.T) {
 	})
 }
 
+// TestZKConfigWiring @notice Config.ZK takes pre-loaded verifying keys, and both are required.
+//
+// @dev The positive half is here because nothing else covers it: every other ZK test builds
+// zkauthn.New(zkauthn.Options{…}) directly, so kal.New's ZK branch — the path a consumer actually
+// wires — had no test at all. The negative half is the seam that matters after the keys moved out
+// of Config: the pin lives in LoadZKVerifyingKey, which requires a 32-byte digest and is the only
+// way to obtain a *ZKVerifyingKey, so what kal.New still owes is refusing a half-configured ZK
+// rather than constructing something that verifies against one circuit and nothing against the
+// other. A nil verifying key reaching zkauthn would be gotcha 60's shape.
+//
+// @param t the test handle
+func TestZKConfigWiring(t *testing.T) {
+	db := pg.Connect(&pg.Options{Addr: "127.0.0.1:1", User: "nobody"}) // never dialled
+	t.Cleanup(func() { _ = db.Close() })
+	keys := testZKArtifacts(t)
+
+	t.Run("both keys wire the service", func(t *testing.T) {
+		cfg := newTestConfig(db)
+		cfg.ZK = &kal.ZKConfig{KnowledgeVK: keys.knowledgeVK, MembershipVK: keys.membershipVK}
+		auth, err := kal.New(cfg)
+		if err != nil {
+			t.Fatalf("New: %v", err)
+		}
+		if auth.ZK == nil {
+			t.Error("Config.ZK is set and Auth.ZK is nil")
+		}
+	})
+
+	t.Run("the keys are shared, not reloaded per instance", func(t *testing.T) {
+		// The reason C2 exists: N instances in one process used to parse and hold N copies of the
+		// same key. Passing one pointer to two Configs is the whole mechanism, so it must construct.
+		for _, schema := range []string{"tenant_a", "tenant_b"} {
+			cfg := newTestConfig(db)
+			cfg.TableSchema = schema
+			cfg.ZK = &kal.ZKConfig{KnowledgeVK: keys.knowledgeVK, MembershipVK: keys.membershipVK}
+			if _, err := kal.New(cfg); err != nil {
+				t.Fatalf("New(%s): %v", schema, err)
+			}
+		}
+	})
+
+	cases := map[string]*kal.ZKConfig{
+		"no knowledge key":  {MembershipVK: keys.membershipVK},
+		"no membership key": {KnowledgeVK: keys.knowledgeVK},
+		"neither key":       {},
+	}
+	for name, zk := range cases {
+		t.Run(name, func(t *testing.T) {
+			cfg := newTestConfig(db)
+			cfg.ZK = zk
+			if _, err := kal.New(cfg); err == nil {
+				t.Error("New accepted a Config.ZK missing a verifying key")
+			}
+		})
+	}
+}
+
 // TestSharedHasherIsTheSameInstance @notice Config.Hasher makes the Argon2 bound process-wide.
 //
 // @dev Pointer identity is the whole assertion, and it is asserting about the semaphore rather
