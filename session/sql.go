@@ -18,6 +18,7 @@ func render(prefix string) statements {
 		revoke:    fmt.Sprintf(revokeSQL, prefix),
 		revokeAll: fmt.Sprintf(revokeAllSQL, prefix),
 		list:      fmt.Sprintf(listSQL, prefix),
+		recordMFA: fmt.Sprintf(recordMFASQL, prefix),
 	}
 }
 
@@ -80,6 +81,19 @@ update %[1]sauth_sessions
    and idle_expires_at > now()
    and expires_at > now()
 returning user_id`
+
+// recordMFASQL @notice Stamps mfa_at on a live session, matched on both ids.
+//
+// @dev The user_id match is not redundant with the session id: without it a caller holding one
+// session id could elevate another user's session. The liveness predicate is the same one
+// lookupSQL applies, so a factor satisfied against a session that has since been revoked or
+// expired cannot resurrect it — RETURNING id is how the caller learns which happened.
+const recordMFASQL = `
+update %[1]sauth_sessions
+   set mfa_at = now()
+ where id = ? and user_id = ? and revoked_at is null
+   and idle_expires_at > now() and expires_at > now()
+returning id`
 
 // revokeSQL @notice Terminates one session. Idempotent: revoking twice is not an error.
 const revokeSQL = `

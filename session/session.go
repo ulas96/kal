@@ -68,7 +68,7 @@ type Sessions struct {
 
 // statements @notice The SQL from sql.go with the schema qualifier rendered in, once.
 type statements struct {
-	issue, lookup, rotate, revoke, revokeAll, list string
+	issue, lookup, rotate, revoke, revokeAll, list, recordMFA string
 }
 
 // NewSessions @notice Validates opts and prepares the statements.
@@ -210,6 +210,41 @@ func (s *Sessions) Rotate(ctx context.Context, db orm.DB, sessionID string) (str
 		return "", err
 	}
 	return token, nil
+}
+
+// RecordMFA @notice Marks the session as having satisfied a second factor, now.
+//
+// @dev The seam the @auth(mfa:) directive was always documented as having. kal ships no TOTP and
+// no WebAuthn — deliberately, see README "Deliberately not here" — but until this existed the
+// mfa_at column had exactly one writer, inside zkauthn, so the directive denied every caller of
+// every deployment that did not ship Groth16.
+//
+// Deliberately does not rotate: a privilege change never rides on the old credential, so a caller
+// that wants rotation calls [Sessions.Rotate] explicitly and can see both in one place.
+// Deliberately takes no time.Time: now() is the database clock, the one time authority, exactly
+// as issueSQL argues — N replicas with drifting clocks must not disagree about when a factor was
+// satisfied.
+//
+// The returned error wraps pg.ErrNoRows rather than replacing it, so a caller that must not
+// distinguish "session not live" from any other refusal — zkauthn, where the difference is a
+// timing-and-message oracle (gotcha 63) — can still classify it with errors.Is.
+//
+// @param sessionID the id from the caller's Principal
+// @param userID    the caller's id; both are matched, so a session id alone cannot elevate
+//
+//	another user's session
+//
+// @return error    UNAUTHENTICATED when the session is not live, or a driver error
+func (s *Sessions) RecordMFA(ctx context.Context, db orm.DB, sessionID, userID string) error {
+	var id string
+	if _, err := db.QueryOneContext(ctx, pg.Scan(&id), s.sql.recordMFA, sessionID, userID); err != nil {
+		if errors.Is(err, pg.ErrNoRows) {
+			return &kalerr.Error{Code: kalerr.CodeUnauthenticated,
+				Message: "session is no longer valid", Internal: err}
+		}
+		return err
+	}
+	return nil
 }
 
 // Revoke @notice Terminates one session. Idempotent.

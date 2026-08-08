@@ -3,12 +3,12 @@ package zkauthn
 import "fmt"
 
 type statements struct {
-	issueChallenge, peekChallenge, consumeChallenge, upsertCommitment, commitmentByUser, setMFA string
-	passwordHashByUser                                                                          string
-	lockTree, nextLeaf, insertCredential, credentialByIndex, credentialsByUser                  string
-	nodeByPosition, upsertNode, deleteNode, retireRoot, insertRoot, currentRoot, rootAccepted   string
-	markRevoked, upsertClaim, claimByName, bindRecurringNullifier, oneShotNullifier             string
-	resolveNullifier, createNullifier, storeSessionClaim                                        string
+	issueChallenge, peekChallenge, consumeChallenge, upsertCommitment, commitmentByUser       string
+	passwordHashByUser                                                                        string
+	lockTree, nextLeaf, insertCredential, credentialByIndex, credentialsByUser                string
+	nodeByPosition, upsertNode, deleteNode, retireRoot, insertRoot, currentRoot, rootAccepted string
+	markRevoked, upsertClaim, claimByName, bindRecurringNullifier, oneShotNullifier           string
+	resolveNullifier, createNullifier, storeSessionClaim                                      string
 }
 
 func render(prefix string) statements {
@@ -19,7 +19,6 @@ func render(prefix string) statements {
 		upsertCommitment:       fmt.Sprintf(upsertCommitmentSQL, prefix),
 		commitmentByUser:       fmt.Sprintf(commitmentByUserSQL, prefix),
 		passwordHashByUser:     fmt.Sprintf(passwordHashByUserSQL, prefix),
-		setMFA:                 fmt.Sprintf(setMFASQL, prefix),
 		lockTree:               lockTreeSQL,
 		nextLeaf:               fmt.Sprintf(nextLeafSQL, prefix),
 		insertCredential:       fmt.Sprintf(insertCredentialSQL, prefix),
@@ -91,13 +90,6 @@ select commitment from %[1]sauth_zk_commitments where user_id = ?`
 // #nosec G101 -- SQL text with bound parameters, not a credential
 const passwordHashByUserSQL = `
 select coalesce(password_hash, '') from %[1]sauth_users where id = ? and deleted_at is null`
-
-const setMFASQL = `
-update %[1]sauth_sessions
-   set mfa_at = now()
- where id = ? and user_id = ? and revoked_at is null
-   and idle_expires_at > now() and expires_at > now()
-returning id`
 
 // One lock for one root. The numeric key is stable and package-specific.
 const lockTreeSQL = `select pg_advisory_xact_lock(715056534291)`

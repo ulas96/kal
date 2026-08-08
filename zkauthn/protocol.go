@@ -268,8 +268,12 @@ func (z *ZK) VerifyKnowledge(ctx context.Context, db orm.DB, req KnowledgeReques
 		if _, err := z.consumeChallenge(ctx, tx, req.Challenge, challengeKnowledge, p.SessionID); err != nil {
 			return err
 		}
-		var sessionID string
-		if _, err := tx.QueryOneContext(ctx, pg.Scan(&sessionID), z.sql.setMFA, p.SessionID, p.UserID); err != nil {
+		// noRowsInvalid, unchanged: RecordMFA wraps pg.ErrNoRows rather than replacing it, so a
+		// dead session still classifies as an invalid proof here while a driver failure stays a
+		// driver failure. Collapsing both into invalidProof would hide an outage; letting the
+		// typed UNAUTHENTICATED through would tell an attacker which of the two failed, which is
+		// the oracle the rest of this function is built to avoid (gotcha 63).
+		if err := z.sessions.RecordMFA(ctx, tx, p.SessionID, p.UserID); err != nil {
 			return noRowsInvalid(err)
 		}
 		rotated, err = z.sessions.Rotate(ctx, tx, p.SessionID)
