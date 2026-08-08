@@ -2,10 +2,14 @@ package authz
 
 import (
 	"context"
+	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/go-pg/pg/v10"
 	"github.com/go-pg/pg/v10/orm"
+
+	"github.com/ulas96/kal/kalerr"
 )
 
 // WithRLS @notice Runs fn in a transaction whose Postgres session variables carry the caller,
@@ -59,16 +63,65 @@ import (
 // @param fn  runs with the tx, which it must use for every query the policies should see
 // @return error fn's error, or the transaction's
 func WithRLS(ctx context.Context, db *pg.DB, fn func(orm.DB) error) error {
+	return WithRLSSettings(ctx, db, nil, fn)
+}
+
+// settingKeyRe @notice What an extra RLS setting may be named.
+//
+// @dev The app. prefix is required rather than merely conventional: an unprefixed name can
+// collide with a real Postgres GUC, and set_config on one of those either errors or changes
+// backend behaviour for the rest of the transaction.
+var settingKeyRe = regexp.MustCompile(`^app\.[a-z_][a-z0-9_]*$`)
+
+// WithRLSSettings @notice [WithRLS], plus consumer settings on the same transaction.
+//
+// @dev Read WithRLS's doc comment first; all four of its traps apply here unchanged. This exists
+// because a consumer whose tenancy is not a single owner column — an org, a project, a region —
+// otherwise has to copy that function into their own repository and re-derive all four.
+//
+// The one thing this adds: extra keys are validated against ^app\.[a-z_][a-z0-9_]*$ even though
+// set_config takes its name as a bound parameter and needs no such check. The validation is not
+// load-bearing against injection — it is there so a typo becomes an error instead of a setting no
+// policy reads, which is a policy that silently matches nothing or, worse, silently matches
+// everything.
+//
+// Keys are applied in sorted order and in one statement, so the query log shows a stable
+// statement rather than one shape per map iteration.
+//
+// @param ctx   the resolver context, read for the caller
+// @param db    the pool; a transaction is opened on it
+// @param extra settings to set transaction-locally; keys must be app.-prefixed. Nil is WithRLS.
+// @param fn    runs with the tx, which it must use for every query the policies should see
+// @return error a rejected key, fn's error, or the transaction's
+func WithRLSSettings(ctx context.Context, db *pg.DB, extra map[string]string,
+	fn func(orm.DB) error) error {
 	var userID, roles string
 	if p, ok := From(ctx); ok {
 		userID = p.UserID
 		roles = strings.Join(p.Roles, ",")
 	}
+
+	keys := make([]string, 0, len(extra))
+	for k := range extra {
+		if !settingKeyRe.MatchString(k) {
+			return &kalerr.Error{Code: kalerr.CodeInvalidInput,
+				Message: "RLS setting names must match ^app\\.[a-z_][a-z0-9_]*$"}
+		}
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	// One round trip for every setting. The caller's names and values are bound like the two
+	// built-in ones; nothing here is concatenated into SQL text.
+	stmt := `select set_config('app.user_id', ?, true), set_config('app.roles', ?, true)`
+	args := []any{userID, roles}
+	for _, k := range keys {
+		stmt += `, set_config(?, ?, true)`
+		args = append(args, k, extra[k])
+	}
+
 	return db.RunInTransaction(ctx, func(tx *pg.Tx) error {
-		// One round trip for both settings.
-		if _, err := tx.ExecContext(ctx,
-			`select set_config('app.user_id', ?, true), set_config('app.roles', ?, true)`,
-			userID, roles); err != nil {
+		if _, err := tx.ExecContext(ctx, stmt, args...); err != nil {
 			return err
 		}
 		return fn(tx)

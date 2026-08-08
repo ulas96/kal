@@ -56,15 +56,16 @@ var (
 
 	// The wrappers must instantiate to exactly the sub-package signature. Assigning both to one
 	// typed var is the compile-time assertion — funcs cannot be compared to each other.
-	_, _ fromFn      = kal.From, authz.From
-	_, _ requireFn   = kal.Require, authz.Require
-	_, _ hasRoleFn   = kal.HasRole, authz.HasRole
-	_, _ scopeFn     = kal.Scope, authz.Scope
-	_, _ coverageFn  = kal.AssertAuthCoverage, authz.AssertAuthCoverage
-	_, _ wiredFn     = kal.AssertDirectivesWired, authz.AssertDirectivesWired
-	_, _ presentFn   = kal.PresentError, kalerr.PresentError
-	_, _ validateFn  = kal.ValidatePassword, authn.ValidatePassword
-	_, _ newHasherFn = kal.NewHasher, authn.NewHasher
+	_, _ fromFn        = kal.From, authz.From
+	_, _ requireFn     = kal.Require, authz.Require
+	_, _ hasRoleFn     = kal.HasRole, authz.HasRole
+	_, _ scopeFn       = kal.Scope, authz.Scope
+	_, _ coverageFn    = kal.AssertAuthCoverage, authz.AssertAuthCoverage
+	_, _ wiredFn       = kal.AssertDirectivesWired, authz.AssertDirectivesWired
+	_, _ presentFn     = kal.PresentError, kalerr.PresentError
+	_, _ validateFn    = kal.ValidatePassword, authn.ValidatePassword
+	_, _ newHasherFn   = kal.NewHasher, authn.NewHasher
+	_, _ rlsSettingsFn = kal.WithRLSSettings, authz.WithRLSSettings
 
 	// The zk surface, on the same terms. kal.go gained roughly fifty ZK* names by hand and none of
 	// them had an assertion, so nothing stopped a future `type ZKClaim struct{…}` — a definition
@@ -190,15 +191,16 @@ func TestZKReExportedConstants(t *testing.T) {
 
 // The shapes the re-exported functions instantiate to.
 type (
-	fromFn      = func(context.Context) (*authz.Principal, bool)
-	requireFn   = func(context.Context) (*authz.Principal, error)
-	hasRoleFn   = func(context.Context, string) bool
-	scopeFn     = func(context.Context, string) func(*orm.Query) *orm.Query
-	coverageFn  = func(graphql.ExecutableSchema, ...string) error
-	wiredFn     = func(any) error
-	presentFn   = func(context.Context, error) *gqlerror.Error
-	validateFn  = func(string) error
-	newHasherFn = func(authn.Params, int64) (*authn.Hasher, error)
+	fromFn        = func(context.Context) (*authz.Principal, bool)
+	requireFn     = func(context.Context) (*authz.Principal, error)
+	hasRoleFn     = func(context.Context, string) bool
+	scopeFn       = func(context.Context, string) func(*orm.Query) *orm.Query
+	coverageFn    = func(graphql.ExecutableSchema, ...string) error
+	wiredFn       = func(any) error
+	presentFn     = func(context.Context, error) *gqlerror.Error
+	validateFn    = func(string) error
+	newHasherFn   = func(authn.Params, int64) (*authn.Hasher, error)
+	rlsSettingsFn = func(context.Context, *pg.DB, map[string]string, func(orm.DB) error) error
 
 	zkSetupFn           = func(zkauthn.Circuit, io.Writer, io.Writer) error
 	zkLoadVKFn          = func(zkauthn.Circuit, io.Reader, []byte) (*zkauthn.VerifyingKey, error)

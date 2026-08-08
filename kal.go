@@ -175,6 +175,14 @@ type Config struct {
 	// is satisfied. Empty means none — there is no implicit "admin".
 	BypassRole string
 
+	// RLSSettings @notice Extra Postgres settings [Auth.WithRLS] carries, resolved per request.
+	// Nil carries only app.user_id and app.roles.
+	//
+	// @dev The config-level form rather than a second entry point, so tenancy resolution lives in
+	// one place at construction and a resolver cannot forget to pass it. Keys must be
+	// app.-prefixed; see [authz.WithRLSSettings] for why that is checked.
+	RLSSettings func(context.Context) map[string]string
+
 	// MFAWindow @notice How recently MFA must have been satisfied for @auth(mfa: true).
 	// Default 15m.
 	MFAWindow time.Duration
@@ -491,10 +499,14 @@ func (a *Auth) MigrateSchema(ctx context.Context, schema string) error {
 	return migrateSchema(ctx, a.db, schema)
 }
 
-// WithRLS @notice Runs fn in a transaction whose Postgres session variables carry the caller.
+// WithRLS @notice Runs fn in a transaction whose Postgres session variables carry the caller,
+// plus whatever Config.RLSSettings resolves for this request.
 // See [authz.WithRLS] for the four ways an RLS deployment breaks silently.
 func (a *Auth) WithRLS(ctx context.Context, fn func(orm.DB) error) error {
-	return authz.WithRLS(ctx, a.db, fn)
+	if a.cfg.RLSSettings == nil {
+		return authz.WithRLS(ctx, a.db, fn)
+	}
+	return authz.WithRLSSettings(ctx, a.db, a.cfg.RLSSettings(ctx), fn)
 }
 
 // The re-exported surface. Types are aliases, so kal.Principal *is* authz.Principal and a value
@@ -603,6 +615,16 @@ func HasRole(ctx context.Context, role string) bool { return authz.HasRole(ctx, 
 // Scope @notice The caller's ownership predicate, for luima's crud options. See [authz.Scope].
 func Scope(ctx context.Context, column string) func(*orm.Query) *orm.Query {
 	return authz.Scope(ctx, column)
+}
+
+// WithRLSSettings @notice WithRLS, plus consumer settings on the same transaction. See
+// [authz.WithRLSSettings].
+//
+// @dev The direct form, for a caller with its own pool or one resolving settings at the call site
+// rather than through Config.RLSSettings.
+func WithRLSSettings(ctx context.Context, db *pg.DB, extra map[string]string,
+	fn func(orm.DB) error) error {
+	return authz.WithRLSSettings(ctx, db, extra, fn)
 }
 
 // AssertAuthCoverage @notice Fails if any field is reachable without an @auth annotation. Call
