@@ -1,6 +1,7 @@
 package tests
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 
@@ -23,6 +24,51 @@ func TestMigrationFiles(t *testing.T) {
 	for _, f := range files {
 		if !strings.HasSuffix(f, ".sql") {
 			t.Errorf("non-sql file embedded: %s", f)
+		}
+	}
+}
+
+// TestMigrationsTablesMatchSQL @notice Tables() lists exactly what the .sql files create.
+//
+// @dev The whole anti-drift mechanism, and the reason a hand-written list is acceptable: a new
+// migration that adds a table fails here until the list is updated. What that protects is a
+// consumer sharing a schema with kal and generating CRUD from information_schema — a table
+// missing from this list is one their generator will happily expose, and auth_user_roles is a
+// mutation that grants its caller any role.
+//
+// @param t the test handle
+func TestMigrationsTablesMatchSQL(t *testing.T) {
+	declared := map[string]bool{}
+	for _, name := range migrations.Tables() {
+		if declared[name] {
+			t.Errorf("Tables() lists %s twice", name)
+		}
+		declared[name] = true
+	}
+
+	created := map[string]bool{}
+	re := regexp.MustCompile(`(?mi)^\s*create\s+table\s+(?:if\s+not\s+exists\s+)?"?(\w+)"?`)
+	for _, file := range migrations.Files() {
+		raw, err := migrations.FS.ReadFile(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, m := range re.FindAllStringSubmatch(string(raw), -1) {
+			created[m[1]] = true
+		}
+	}
+	if len(created) == 0 {
+		t.Fatal("the regex matched no create table statement — the test is asserting nothing")
+	}
+
+	for name := range created {
+		if !declared[name] {
+			t.Errorf("%s is created by a migration and missing from Tables()", name)
+		}
+	}
+	for name := range declared {
+		if !created[name] {
+			t.Errorf("Tables() lists %s, which no migration creates", name)
 		}
 	}
 }

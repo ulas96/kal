@@ -42,3 +42,28 @@ func Files() []string {
 	sort.Strings(names)
 	return names
 }
+
+// Tables @notice Every table the migrations create, unqualified.
+//
+// @dev For a consumer that shares a Postgres schema between kal's tables and its own, and
+// generates anything from information_schema. Several of these carry a user_id column, so a
+// generator applying the usual owner-column convention will emit CRUD over auth_user_roles —
+// which is a mutation that grants its caller any role — and over auth_sessions, which is one that
+// clears revoked_at. Exclude these before generating, not after.
+//
+// A hand-written list rather than a parse of the SQL: a parser is more code and more ways to be
+// wrong, and the test asserting set equality against the .sql files is what stops this drifting.
+//
+// @return []string table names in migration order
+func Tables() []string {
+	return []string{
+		// 0001_core.sql
+		"auth_users", "auth_sessions", "auth_tokens",
+		"auth_roles", "auth_user_roles", "auth_login_attempts",
+		// 0002_zk.sql
+		"auth_zk_commitments", "auth_zk_challenges", "auth_zk_nodes", "auth_zk_credentials",
+		"auth_zk_roots", "auth_zk_nullifiers", "auth_zk_claims", "auth_zk_session_claims",
+		// 0003_e2ee.sql
+		"auth_e2ee_vaults",
+	}
+}
