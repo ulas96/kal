@@ -105,9 +105,14 @@ type DirectiveOptions struct {
 // *parent*, which can blank an entire object. Prefer nullable types for conditionally visible
 // fields.
 //
-// mfa: true always denies while no MFA module is installed. Failing closed is the only safe
-// direction — a step-up requirement that silently passes is worse than one that visibly
-// blocks, and the session column and this argument are the seam a later module plugs into.
+// mfa: true denies until something has stamped auth_sessions.mfa_at, and the window below is
+// measured from it. [session.Sessions.RecordMFA] is that writer and any consumer can reach it,
+// whatever factor it verified first; zkauthn calls it too, so a Groth16 deployment and a TOTP
+// one land in the same column. Failing closed stays the direction — a step-up requirement that
+// silently passes is worse than one that visibly blocks.
+//
+// The window is compared against the process clock while mfa_at is written by the database's
+// (gotcha 81), so keep both on NTP: the two clocks meet here and nowhere else.
 //
 // @param opts zero value for the defaults
 // @return func the directive implementation, matching gqlgen's generated field type

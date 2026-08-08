@@ -167,6 +167,14 @@ N·limit·19 MiB in flight: the parameter that stops concurrent logins from beco
 stops bounding anything at exactly the scale where it matters. The process ceiling is the sum, not
 the max.
 
+**81 · `mfa_at` is written on the database clock and read on the process clock.**
+`Sessions.RecordMFA` stamps `now()` deliberately, so N replicas cannot disagree about when a factor
+was satisfied; the `@auth(mfa:)` directive then compares it with `time.Since`, which is the clock of
+whichever process is answering. The skew avoided on the write comes back on the read, and it fails
+*open* by the skew when the process clock lags the database's — a 15-minute window is really
+`window + skew`. Nothing errors, and the step-up looks like it works. Keep both on NTP; the two
+clocks meet at `authz/directive.go` and nowhere else in kal.
+
 **30 · Equalize timing with a real hash, not a sleep.** A sleep has a different distribution from a
 hash, and an attacker averaging over samples sees the difference. Traefik shipped exactly this bug
 (GHSA-g3hg-j4jv-cwfr).

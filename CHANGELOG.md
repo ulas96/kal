@@ -46,7 +46,12 @@ will be listed here under **Changed** with the migration in one line.
   RLS transaction, so a consumer whose tenancy is not a single owner column can express it in a
   policy without copying `WithRLS` and re-deriving its four traps. `WithRLS` is now a call to the
   new function, so there is one implementation of the transaction and the `set_config` discipline.
-- `docs/gotchas.md` gains entries 79 and 80.
+  `app.user_id` and `app.roles` are rejected as extras: both match the key pattern and both sort
+  after the two settings the function writes itself, so before this an extra naming one of them was
+  evaluated last and won — a hook returning `app.user_id` silently replaced the caller's identity
+  for every policy in the transaction, with nothing in any log and every policy still appearing to
+  work.
+- `docs/gotchas.md` gains entries 79, 80 and 81.
 
 ### Changed
 

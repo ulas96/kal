@@ -58,7 +58,13 @@ app := luima.New(luima.Config{
 ```
 
 Apply the schema with your own migration tool — the SQL is plain files behind an `embed.FS`
-(`migrations.FS`), or `auth.Migrate(ctx)` runs them in order if you have no tooling yet.
+(`migrations.FS`), or `auth.Migrate(ctx)` runs them in order if you have no tooling yet. `Migrate`
+runs the DDL on the connection's `search_path` and ignores `Config.TableSchema`; for one schema per
+tenant use `auth.MigrateSchema(ctx, "tenant_a")`, which creates the schema and sets `search_path`
+transaction-locally so the two cannot drift apart. If you generate code from `information_schema`,
+`migrations.Tables()` is the list to exclude — several kal tables carry a `user_id` column, and a
+generator following the usual owner-column convention will happily emit CRUD over `auth_user_roles`,
+which is a mutation that grants its caller any role.
 
 Paste `authz.DirectiveSDL` into your `.graphqls`, and bind the enum in `gqlgen.yml`:
 
@@ -178,6 +184,22 @@ list — never `*` with credentials.
 | `migrations` | the schema, as `.sql` behind an `embed.FS` |
 | `tests` | every test, outside the packages it exercises |
 
+### Operating seams
+
+Optional `Config` fields for deployments that outgrow the defaults. Every one of them is a named
+field rather than a mode, because the zero `Config` is the production posture and nothing here
+relaxes a security property.
+
+| field | what it is for |
+|---|---|
+| `Audit` | A `func(ctx, kal.Event)` called for the security-relevant things kal sees and a consumer structurally cannot: `login.ok`, `login.fail`, `backoff.open`, `password.rehash`, `mail.fail`, `session.lookup.fail`, `session.revoked`. Synchronous, so a hook that talks to the network must queue internally. Nil discards. Role grants, `e2ee` and `zkauthn` are not in the vocabulary yet. |
+| `Hasher` | A pre-built `kal.NewHasher(params, max)` shared between instances. Without it every `New` builds its own Argon2 semaphore, so a process holding one instance per tenant schema holds N × the limit in flight at ~19 MiB each — the bound stops bounding at the scale where it matters. Setting it beside `Argon2` or `MaxConcurrentHashes` is an error, not a silently ignored cost parameter. |
+| `RLSSettings` | `func(ctx) map[string]string` of extra `app.`-prefixed settings carried on `auth.WithRLS`'s transaction, for tenancy that is not a single owner column. `app.user_id` and `app.roles` are refused — they carry the caller. `authz.WithRLSSettings` is the direct form. |
+
+A second factor is `auth.Sessions.RecordMFA(ctx, db, sessionID, userID)`: verify whatever factor you
+ship, call it, and `@auth(mfa: true)` passes for `MFAWindow`. It does not rotate the session, and it
+takes no timestamp — `now()` is the database clock.
+
 ### What it costs you to depend on kal
 
 Beyond luima's graph, kal adds **four** direct requires — read `go.mod` for the pinned versions and
@@ -206,8 +228,9 @@ not one a configuration flag can substitute for.
 
 ## Deliberately not here
 
-WebAuthn/passkeys (a second authentication system's worth of surface; `auth_sessions.mfa_at` and
-`@auth(mfa:)` are the seam if it is ever added), an admin UI, a scaffolding CLI, email templating
+WebAuthn/passkeys (a second authentication system's worth of surface; verify the factor yourself and
+call `Sessions.RecordMFA` to stamp `auth_sessions.mfa_at`, which is what `@auth(mfa:)` reads), an
+admin UI, a scaffolding CLI, email templating
 beyond a one-method `Mailer`, avatar storage, a policy DSL, SMS as a second factor, magic links as a
 primary factor, and a pluggable `Store` interface — Postgres is the premise, so that interface would
 have one implementation and would forbid the `JOIN` that is the entire point.
