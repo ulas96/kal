@@ -2,12 +2,14 @@ package tests
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
 	"github.com/go-pg/pg/v10"
 
 	"github.com/ulas96/kal"
+	"github.com/ulas96/kal/kalerr"
 )
 
 // TestDBMigrateSchemaTargetsNamedSchema @notice Two provisioning calls land in two schemas, and
@@ -97,6 +99,11 @@ func TestDBMigrateSchemaTargetsNamedSchema(t *testing.T) {
 // caller's string and executed SQL. No database needed: the rejection must happen before any
 // statement is built, which is also why a Config pointing at an unreachable address is enough.
 //
+// The assertion is on INVALID_INPUT specifically, not on the error being non-nil, and the pool is
+// deliberately unreachable. "Any error" is also what a dial failure produces, so the loose form
+// passed with identRe deleted — it asserted that Postgres was absent, not that the name was
+// refused. Same flaw, same fix, as TestWithRLSSettingsRejectsBadKey.
+//
 // @param t the test handle
 func TestMigrateSchemaRejectsBadName(t *testing.T) {
 	db := pg.Connect(&pg.Options{Addr: "127.0.0.1:1", User: "nobody"}) // never dialled
@@ -117,9 +124,19 @@ func TestMigrateSchemaRejectsBadName(t *testing.T) {
 		"tenant schema",       // space
 	} {
 		t.Run(name, func(t *testing.T) {
-			if err := auth.MigrateSchema(context.Background(), name); err == nil {
-				t.Errorf("MigrateSchema accepted %q", name)
+			err := auth.MigrateSchema(context.Background(), name)
+			var ae *kalerr.Error
+			if !errors.As(err, &ae) || ae.Code != kalerr.CodeInvalidInput {
+				t.Errorf("MigrateSchema(%q): err = %v, want INVALID_INPUT", name, err)
 			}
 		})
+	}
+
+	// The control: a well-formed name must get past identRe and fail on the connection instead.
+	// Without it, the assertion above is satisfied by a validator that rejects everything.
+	err = auth.MigrateSchema(context.Background(), "acme_corp")
+	var ae *kalerr.Error
+	if errors.As(err, &ae) && ae.Code == kalerr.CodeInvalidInput {
+		t.Errorf("a valid schema name was rejected as INVALID_INPUT: %v", err)
 	}
 }
