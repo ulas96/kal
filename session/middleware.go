@@ -76,6 +76,10 @@ func (s *Sessions) Middleware(db orm.DB, opts MiddlewareOptions) func(http.Handl
 					// log.Printf for the same reason luimaerr does: wrapping the middleware
 					// is the logging seam, and a Logger field would be a second way to do it.
 					log.Printf("kal/session: lookup failed, proceeding anonymously: %v", lookupErr)
+					// The request continues as anonymous, so nothing downstream will report this.
+					// It is the one place a database outage silently becomes a logged-out user.
+					s.audit.Emit(ctx, authz.Event{Kind: "session.lookup.fail", IP: clientIP(r),
+						Detail: map[string]string{"error": lookupErr.Error()}})
 				case p != nil:
 					ctx = authz.WithPrincipal(ctx, p)
 				default:

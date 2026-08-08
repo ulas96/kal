@@ -8,6 +8,56 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 While the major version is `0`, the public API may change in a minor release. Every such change
 will be listed here under **Changed** with the migration in one line.
 
+## [Unreleased]
+
+### Added
+
+- `Config.Hasher`: a pre-built `authn.Hasher` to use instead of building one, so a process running
+  several kal instances shares one Argon2 semaphore. Without it each `New` builds its own and the
+  in-flight bound is per instance, so N instances hold N × `MaxConcurrentHashes` hashes at ~19 MiB
+  each — the parameter that stops concurrent logins becoming a remote OOM stops bounding anything at
+  exactly the scale where it matters. Setting it together with `Argon2` or `MaxConcurrentHashes` is
+  an error at `New` rather than a silently ignored cost parameter. `kal.Hasher` and `kal.NewHasher`
+  are re-exported so the shared value can be built without importing `authn`. Gotcha 79.
+- `Auth.MigrateSchema(ctx, schema)`: applies every migration into a named schema, creating it if
+  needed, with `search_path` set transaction-locally. `Auth.Migrate` runs the DDL on the connection's
+  `search_path` and ignores `Config.TableSchema`, which is correct for one application and a footgun
+  for a provisioning loop — a loop whose two settings drift apart writes one schema's auth tables
+  into another with no error. Gotcha 80.
+- `Sessions.RecordMFA(ctx, db, sessionID, userID)`: stamps `auth_sessions.mfa_at`. Until now that
+  column had exactly one writer, inside `zkauthn`, so `@auth(mfa: true)` denied every caller of every
+  deployment that did not ship Groth16 — the directive's seam existed and nothing could reach it.
+  Does not rotate the session and takes no timestamp; `now()` is the database clock. The refusal
+  wraps `pg.ErrNoRows`, so `zkauthn` still tells a dead session from a driver failure without
+  surfacing the difference to a client.
+- `migrations.Tables()`: the tables the migrations create. For a consumer sharing a schema between
+  kal's tables and its own and generating anything from `information_schema` — several kal tables
+  carry a `user_id` column, so the usual owner-column convention will generate CRUD over
+  `auth_user_roles`, which is a mutation that grants its caller any role.
+- `Config.Audit`, `authz.Event` and `authz.Audit`: a hook called for security-relevant events kal
+  can see and a consumer cannot — `login.ok`, `login.fail`, `backoff.open`, `password.rehash`,
+  `mail.fail`, `session.lookup.fail`, `session.revoked`. Synchronous, like `Mailer`, and nil
+  discards. Events are emitted beside the existing log lines, not instead of them. Role grant and
+  revoke are not in this vocabulary yet: `authz.NewRoles` takes a bare schema string, and giving it
+  the hook is a breaking signature change that does not belong in the same release. `e2ee` and
+  `zkauthn` take no hook yet either, for the same reason in reverse — neither emits anything in this
+  vocabulary, and an options field that does nothing is surface to support.
+- `Config.RLSSettings` and `authz.WithRLSSettings`: extra `app.`-prefixed settings carried on the
+  RLS transaction, so a consumer whose tenancy is not a single owner column can express it in a
+  policy without copying `WithRLS` and re-deriving its four traps. `WithRLS` is now a call to the
+  new function, so there is one implementation of the transaction and the `set_config` discipline.
+- `docs/gotchas.md` gains entries 79 and 80.
+
+### Changed
+
+- **`Config.ZK` takes pre-loaded verifying keys.** `ZKConfig`'s `KnowledgeVerifyingKey` /
+  `KnowledgeVerifyingKeySHA256` / `MembershipVerifyingKey` / `MembershipVerifyingKeySHA256` are
+  replaced by `KnowledgeVK` and `MembershipVK`, both `*ZKVerifyingKey`. Migration: call
+  `kal.LoadZKVerifyingKey(kind, reader, sha256)` once at startup and pass the results. The SHA-256
+  pin is not weakened — `LoadZKVerifyingKey` requires a 32-byte digest and `VerifyingKey`'s fields
+  are unexported, so it remains the only way to obtain one. A process running several kal instances
+  now loads and holds one key rather than one per instance.
+
 ## [0.3.0] - 2026-08-08
 
 ### Added

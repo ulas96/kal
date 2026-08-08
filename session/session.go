@@ -19,6 +19,7 @@ import (
 	"net"
 	"regexp"
 	"sort"
+	"strconv"
 	"time"
 
 	"github.com/go-pg/pg/v10"
@@ -52,6 +53,11 @@ type Options struct {
 	// Schema @notice Optional Postgres schema holding the auth_* tables. Empty means the
 	// connection's search_path decides, which is the default install.
 	Schema string
+	// Audit @notice Called for every security-relevant event. Nil discards them.
+	//
+	// @dev Emitted beside the existing log line rather than instead of it: the log is the
+	// operator's channel and the hook is the consumer's.
+	Audit authz.Audit
 }
 
 // Sessions @notice Issues, resolves, rotates and revokes sessions.
@@ -63,6 +69,7 @@ type Options struct {
 type Sessions struct {
 	idle     time.Duration
 	absolute time.Duration
+	audit    authz.Audit
 	sql      statements
 }
 
@@ -82,7 +89,7 @@ type statements struct {
 // @return *Sessions ready for concurrent use
 // @return error     an invalid schema name, or Absolute < Idle
 func NewSessions(opts Options) (*Sessions, error) {
-	s := &Sessions{idle: opts.Idle, absolute: opts.Absolute}
+	s := &Sessions{idle: opts.Idle, absolute: opts.Absolute, audit: opts.Audit}
 	if s.idle == 0 {
 		s.idle = DefaultIdle
 	}
@@ -252,8 +259,18 @@ func (s *Sessions) RecordMFA(ctx context.Context, db orm.DB, sessionID, userID s
 // @param sessionID the session to kill; unknown or already-revoked is not an error
 // @return error    any driver error
 func (s *Sessions) Revoke(ctx context.Context, db orm.DB, sessionID string) error {
-	_, err := db.ExecContext(ctx, s.sql.revoke, sessionID)
-	return err
+	res, err := db.ExecContext(ctx, s.sql.revoke, sessionID)
+	if err != nil {
+		return err
+	}
+	// Only when a row actually changed. Revoke is idempotent and called on every logout and every
+	// login over an existing cookie, so emitting unconditionally would fill the trail with events
+	// for sessions that were already dead.
+	if res.RowsAffected() > 0 {
+		s.audit.Emit(ctx, authz.Event{Kind: "session.revoked",
+			Detail: map[string]string{"session_id": sessionID, "scope": "one"}})
+	}
+	return nil
 }
 
 // RevokeAllForUser @notice Terminates every live session of one user — password reset, account
@@ -262,8 +279,15 @@ func (s *Sessions) Revoke(ctx context.Context, db orm.DB, sessionID string) erro
 // @param userID the auth_users id
 // @return error any driver error
 func (s *Sessions) RevokeAllForUser(ctx context.Context, db orm.DB, userID string) error {
-	_, err := db.ExecContext(ctx, s.sql.revokeAll, userID)
-	return err
+	res, err := db.ExecContext(ctx, s.sql.revokeAll, userID)
+	if err != nil {
+		return err
+	}
+	if n := res.RowsAffected(); n > 0 {
+		s.audit.Emit(ctx, authz.Event{Kind: "session.revoked", UserID: userID,
+			Detail: map[string]string{"scope": "all", "count": strconv.Itoa(n)}})
+	}
+	return nil
 }
 
 // List @notice The user's live sessions, most recently active first.

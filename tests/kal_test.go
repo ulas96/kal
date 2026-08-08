@@ -46,6 +46,10 @@ var (
 	_ kal.Params      = authn.Params{}
 	_ authn.Hasher    = kal.Hasher{}
 	_ kal.Hasher      = authn.Hasher{}
+	_ authz.Event     = kal.Event{}
+	_ kal.Event       = authz.Event{}
+	_ authz.Audit     = kal.Audit(nil)
+	_ kal.Audit       = authz.Audit(nil)
 	_ session.Info    = kal.SessionInfo{}
 	_ kal.SessionInfo = session.Info{}
 	_ authn.Message   = kal.Message{}

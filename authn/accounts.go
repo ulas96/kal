@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/go-pg/pg/v10"
@@ -67,6 +68,13 @@ type AccountsOptions struct {
 	// default: the zero configuration requires verification, and turning this on is a visible,
 	// named decision rather than a mode.
 	AllowUnverifiedLogin bool
+
+	// Audit @notice Called for every security-relevant event. Nil discards them.
+	//
+	// @dev Emitted beside the existing log lines rather than instead of them: the log is the
+	// operator's channel and the hook is the consumer's, and a deployment that wants both should
+	// not have to choose.
+	Audit authz.Audit
 }
 
 // Accounts @notice The credential flows: Login, Logout, ChangePassword — and, with the token
@@ -84,6 +92,7 @@ type Accounts struct {
 	cookieName      string
 	secretShape     func(string) error
 	allowUnverified bool
+	audit           authz.Audit
 	sql             statements
 }
 
@@ -107,6 +116,7 @@ func NewAccounts(opts AccountsOptions) (*Accounts, error) {
 		cookieName:      opts.CookieName,
 		secretShape:     opts.SecretShape,
 		allowUnverified: opts.AllowUnverifiedLogin,
+		audit:           opts.Audit,
 	}
 	if a.cookieName == "" {
 		a.cookieName = session.DefaultCookieName
@@ -209,6 +219,10 @@ func (a *Accounts) Login(ctx context.Context, db orm.DB, email, password string)
 			return nil, derr // the bound said no; RATE_LIMITED, not a credential verdict
 		}
 		a.recordFailure(ctx, db, email, meta.IP)
+		// No UserID, and deliberately not resolved: this branch covers an account that does not
+		// exist as well as one with no password, and telling them apart in the audit trail would
+		// re-create the enumeration channel the identical error text closes.
+		a.audit.Emit(ctx, authz.Event{Kind: "login.fail", Email: email, IP: meta.IP})
 		return nil, invalidCredentials(nil)
 	case err != nil:
 		return nil, err
@@ -220,9 +234,13 @@ func (a *Accounts) Login(ctx context.Context, db orm.DB, email, password string)
 	}
 	if !ok {
 		a.recordFailure(ctx, db, email, meta.IP)
+		a.audit.Emit(ctx, authz.Event{Kind: "login.fail", UserID: userID, Email: email, IP: meta.IP,
+			Detail: map[string]string{"reason": "password"}})
 		return nil, invalidCredentials(nil)
 	}
 	if !verified && !a.allowUnverified {
+		a.audit.Emit(ctx, authz.Event{Kind: "login.fail", UserID: userID, Email: email, IP: meta.IP,
+			Detail: map[string]string{"reason": "unverified"}})
 		return nil, invalidCredentials(errors.New("email not verified"))
 	}
 
@@ -237,6 +255,8 @@ func (a *Accounts) Login(ctx context.Context, db orm.DB, email, password string)
 		})
 	}
 	a.resetBackoff(ctx, db, email, meta.IP)
+	a.audit.Emit(ctx, authz.Event{Kind: "login.ok", UserID: userID, Email: email, IP: meta.IP,
+		Detail: map[string]string{"prior_failures": strconv.Itoa(priorFailures)}})
 
 	if prior, ok := authz.From(ctx); ok {
 		// The request arrived already holding a session; it is being replaced, so it dies.
@@ -360,6 +380,14 @@ func (a *Accounts) checkBackoff(ctx context.Context, db orm.DB, emailKey, ip str
 			userFailures = r.Failures
 		}
 		if wait := delayFor(r.Scope, r.Failures); wait > 0 && r.Age < wait.Seconds() {
+			// Which counter closed the window is the useful half: the ip scope is the spraying
+			// signal — one attempt against many accounts — that the per-account counter
+			// structurally cannot see.
+			a.audit.Emit(ctx, authz.Event{Kind: "backoff.open", Email: emailKey, IP: ip,
+				Detail: map[string]string{
+					"scope":    r.Scope,
+					"failures": strconv.Itoa(r.Failures),
+				}})
 			return userFailures, &kalerr.Error{
 				Code:    kalerr.CodeRateLimited,
 				Message: "too many attempts, try again shortly",
@@ -396,10 +424,14 @@ func (a *Accounts) rehashStored(ctx context.Context, db orm.DB, userID, password
 	newHash, err := a.hasher.Hash(ctx, password)
 	if err != nil {
 		log.Printf("kal/authn: rehash-on-login: %v", err)
+		a.audit.Emit(ctx, authz.Event{Kind: "password.rehash", UserID: userID,
+			Detail: map[string]string{"error": err.Error()}})
 		return
 	}
 	if _, err := db.ExecContext(ctx, a.sql.updatePassword, newHash, userID, oldHash); err != nil {
 		log.Printf("kal/authn: rehash-on-login: %v", err)
+		a.audit.Emit(ctx, authz.Event{Kind: "password.rehash", UserID: userID,
+			Detail: map[string]string{"error": err.Error()}})
 	}
 }
 
@@ -408,5 +440,7 @@ func (a *Accounts) rehashStored(ctx context.Context, db orm.DB, userID, password
 func (a *Accounts) notify(ctx context.Context, to string, msg Message) {
 	if err := a.mailer.Send(ctx, to, msg); err != nil {
 		log.Printf("kal/authn: sending %s mail: %v", msg.Kind, err)
+		a.audit.Emit(ctx, authz.Event{Kind: "mail.fail", Email: to,
+			Detail: map[string]string{"message": string(msg.Kind), "error": err.Error()}})
 	}
 }

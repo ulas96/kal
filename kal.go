@@ -175,6 +175,18 @@ type Config struct {
 	// is satisfied. Empty means none — there is no implicit "admin".
 	BypassRole string
 
+	// Audit @notice Called for every security-relevant event kal sees. Nil discards them.
+	//
+	// @dev kal observes things a consumer structurally cannot — the backoff window opening, a
+	// login succeeding after N failures, rehash-on-login firing, the session lookup failing on
+	// the driver — and until this existed they went to log.Printf or nowhere. Grepping a log
+	// stream for "kal/authn:" is not an audit trail.
+	//
+	// Same shape as Mailer: kal ships no sink, because a sink is a dependency and every
+	// deployment already has one. Called synchronously, so an implementation that talks to the
+	// network must queue internally. See [authz.Event] for the vocabulary.
+	Audit authz.Audit
+
 	// RLSSettings @notice Extra Postgres settings [Auth.WithRLS] carries, resolved per request.
 	// Nil carries only app.user_id and app.roles.
 	//
@@ -303,6 +315,7 @@ func New(cfg Config) (*Auth, error) {
 		Idle:     cfg.IdleTimeout,
 		Absolute: cfg.AbsoluteTimeout,
 		Schema:   cfg.TableSchema,
+		Audit:    cfg.Audit,
 	})
 	if err != nil {
 		return nil, err
@@ -331,6 +344,7 @@ func New(cfg Config) (*Auth, error) {
 		Schema:               cfg.TableSchema,
 		SecretShape:          secretShape,
 		AllowUnverifiedLogin: cfg.AllowUnverifiedLogin,
+		Audit:                cfg.Audit,
 	})
 	if err != nil {
 		return nil, err
@@ -533,6 +547,12 @@ type LogMailer = authn.LogMailer
 
 // Params @notice Argon2id cost parameters. See [authn.Params].
 type Params = authn.Params
+
+// Event @notice One security-relevant thing kal did. See [authz.Event].
+type Event = authz.Event
+
+// Audit @notice Called for every security-relevant event. See [authz.Audit].
+type Audit = authz.Audit
 
 // Hasher @notice Password hashing with the Argon2 work bounded. See [authn.Hasher].
 type Hasher = authn.Hasher
