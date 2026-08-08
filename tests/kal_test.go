@@ -44,6 +44,8 @@ var (
 	_ kal.AuthLevel   = authz.LevelAnonymous
 	_ authn.Params    = kal.Params{}
 	_ kal.Params      = authn.Params{}
+	_ authn.Hasher    = kal.Hasher{}
+	_ kal.Hasher      = authn.Hasher{}
 	_ session.Info    = kal.SessionInfo{}
 	_ kal.SessionInfo = session.Info{}
 	_ authn.Message   = kal.Message{}
@@ -54,14 +56,15 @@ var (
 
 	// The wrappers must instantiate to exactly the sub-package signature. Assigning both to one
 	// typed var is the compile-time assertion — funcs cannot be compared to each other.
-	_, _ fromFn     = kal.From, authz.From
-	_, _ requireFn  = kal.Require, authz.Require
-	_, _ hasRoleFn  = kal.HasRole, authz.HasRole
-	_, _ scopeFn    = kal.Scope, authz.Scope
-	_, _ coverageFn = kal.AssertAuthCoverage, authz.AssertAuthCoverage
-	_, _ wiredFn    = kal.AssertDirectivesWired, authz.AssertDirectivesWired
-	_, _ presentFn  = kal.PresentError, kalerr.PresentError
-	_, _ validateFn = kal.ValidatePassword, authn.ValidatePassword
+	_, _ fromFn      = kal.From, authz.From
+	_, _ requireFn   = kal.Require, authz.Require
+	_, _ hasRoleFn   = kal.HasRole, authz.HasRole
+	_, _ scopeFn     = kal.Scope, authz.Scope
+	_, _ coverageFn  = kal.AssertAuthCoverage, authz.AssertAuthCoverage
+	_, _ wiredFn     = kal.AssertDirectivesWired, authz.AssertDirectivesWired
+	_, _ presentFn   = kal.PresentError, kalerr.PresentError
+	_, _ validateFn  = kal.ValidatePassword, authn.ValidatePassword
+	_, _ newHasherFn = kal.NewHasher, authn.NewHasher
 
 	// The zk surface, on the same terms. kal.go gained roughly fifty ZK* names by hand and none of
 	// them had an assertion, so nothing stopped a future `type ZKClaim struct{…}` — a definition
@@ -187,14 +190,15 @@ func TestZKReExportedConstants(t *testing.T) {
 
 // The shapes the re-exported functions instantiate to.
 type (
-	fromFn     = func(context.Context) (*authz.Principal, bool)
-	requireFn  = func(context.Context) (*authz.Principal, error)
-	hasRoleFn  = func(context.Context, string) bool
-	scopeFn    = func(context.Context, string) func(*orm.Query) *orm.Query
-	coverageFn = func(graphql.ExecutableSchema, ...string) error
-	wiredFn    = func(any) error
-	presentFn  = func(context.Context, error) *gqlerror.Error
-	validateFn = func(string) error
+	fromFn      = func(context.Context) (*authz.Principal, bool)
+	requireFn   = func(context.Context) (*authz.Principal, error)
+	hasRoleFn   = func(context.Context, string) bool
+	scopeFn     = func(context.Context, string) func(*orm.Query) *orm.Query
+	coverageFn  = func(graphql.ExecutableSchema, ...string) error
+	wiredFn     = func(any) error
+	presentFn   = func(context.Context, error) *gqlerror.Error
+	validateFn  = func(string) error
+	newHasherFn = func(authn.Params, int64) (*authn.Hasher, error)
 
 	zkSetupFn           = func(zkauthn.Circuit, io.Writer, io.Writer) error
 	zkLoadVKFn          = func(zkauthn.Circuit, io.Reader, []byte) (*zkauthn.VerifyingKey, error)
@@ -364,6 +368,108 @@ func TestConfigValidation(t *testing.T) {
 			t.Error("JWT is nil despite an issuer and a key")
 		}
 	})
+}
+
+// TestSharedHasherIsTheSameInstance @notice Config.Hasher makes the Argon2 bound process-wide.
+//
+// @dev Pointer identity is the whole assertion, and it is asserting about the semaphore rather
+// than about the pointer. The bound lives on the Hasher, so two instances holding two Hashers
+// hold two semaphores and the real ceiling is the sum — which is how a process running one kal
+// per tenant schema ends up with N × MaxConcurrentHashes × ~19 MiB in flight (gotcha 79). Nothing
+// weaker works here: comparing the configured limits would pass on two separate Hashers built
+// from the same numbers, which is exactly the bug.
+//
+// @param t the test handle
+func TestSharedHasherIsTheSameInstance(t *testing.T) {
+	db := pg.Connect(&pg.Options{Addr: "127.0.0.1:1", User: "nobody"}) // never dialled
+	t.Cleanup(func() { _ = db.Close() })
+
+	shared, err := kal.NewHasher(kal.Params{Memory: 8192, Time: 1}, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	newInstance := func(schema string) *kal.Auth {
+		t.Helper()
+		cfg := kal.Config{
+			DB:          db,
+			BaseURL:     "https://app.example.test",
+			Mailer:      &recordingMailer{},
+			TableSchema: schema,
+			Hasher:      shared,
+		}
+		auth, err := kal.New(cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return auth
+	}
+
+	a, b := newInstance("tenant_a"), newInstance("tenant_b")
+	if a.Hasher != shared || b.Hasher != shared {
+		t.Fatalf("Config.Hasher was not used: a=%p b=%p want %p", a.Hasher, b.Hasher, shared)
+	}
+	if a.Hasher != b.Hasher {
+		t.Errorf("two instances hold two hashers (%p, %p) — the Argon2 bound is per instance", a.Hasher, b.Hasher)
+	}
+
+	// The default path must keep building its own, or every deployment that never sets the field
+	// would start sharing a hasher it did not ask for.
+	own, err := kal.New(newTestConfig(db))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if own.Hasher == shared {
+		t.Error("a Config without Hasher picked up the shared one")
+	}
+}
+
+// TestHasherWithCostParamsErrors @notice A pre-built Hasher plus a cost parameter is refused, not
+// silently resolved.
+//
+// @dev The zero Config is the production posture and nothing in it weakens quietly. A New that
+// accepted both would ignore one of them, and the failure is invisible: an operator raises Argon2
+// cost, redeploys, and hashes at the old parameters with nothing in any log. Asserting on the
+// error being non-nil rather than on its text, so rewording the message is not a test failure.
+//
+// @param t the test handle
+func TestHasherWithCostParamsErrors(t *testing.T) {
+	db := pg.Connect(&pg.Options{Addr: "127.0.0.1:1", User: "nobody"}) // never dialled
+	t.Cleanup(func() { _ = db.Close() })
+
+	shared, err := kal.NewHasher(kal.Params{Memory: 8192, Time: 1}, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cases := map[string]func(*kal.Config){
+		"Argon2 alongside Hasher":              func(c *kal.Config) { c.Argon2 = kal.Params{Memory: 65536} },
+		"MaxConcurrentHashes alongside Hasher": func(c *kal.Config) { c.MaxConcurrentHashes = 8 },
+		"both alongside Hasher": func(c *kal.Config) {
+			c.Argon2, c.MaxConcurrentHashes = kal.Params{Time: 4}, 8
+		},
+	}
+	for name, mutate := range cases {
+		t.Run(name, func(t *testing.T) {
+			cfg := kal.Config{
+				DB:      db,
+				BaseURL: "https://app.example.test",
+				Mailer:  &recordingMailer{},
+				Hasher:  shared,
+			}
+			mutate(&cfg)
+			if _, err := kal.New(cfg); err == nil {
+				t.Error("New accepted a pre-built Hasher together with a cost parameter it would then ignore")
+			}
+		})
+	}
+
+	// The control: the same Hasher with no cost parameter beside it is the supported wiring.
+	if _, err := kal.New(kal.Config{
+		DB: db, BaseURL: "https://app.example.test", Mailer: &recordingMailer{}, Hasher: shared,
+	}); err != nil {
+		t.Errorf("New rejected a Hasher on its own: %v", err)
+	}
 }
 
 // guardSchema @notice A schema with the field names the guard defends, and enough nesting to

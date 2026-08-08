@@ -140,8 +140,23 @@ type Config struct {
 	// MaxConcurrentHashes @notice In-flight Argon2 ceiling. Zero means GOMAXPROCS.
 	//
 	// @dev Each hash holds ~19 MiB, so this is what stops concurrent logins from becoming a
-	// remote OOM. Per replica: behind N replicas the real ceiling is N times this.
+	// remote OOM. Per replica: behind N replicas the real ceiling is N times this. Per *instance*
+	// too — see Hasher below, which is the seam that makes it process-wide.
 	MaxConcurrentHashes int64
+
+	// Hasher @notice A pre-built password hasher to use instead of building one. Nil builds one
+	// from Argon2 and MaxConcurrentHashes.
+	//
+	// @dev The seam multi-instance deployments need. Every New otherwise builds its own Hasher
+	// with its own semaphore, so a process holding N instances — one per tenant schema, which is
+	// what TableSchema exists for — holds N × MaxConcurrentHashes in-flight hashes at ~19 MiB
+	// each. Zero means GOMAXPROCS *per instance*, so the parameter that bounds a remote OOM stops
+	// bounding it at exactly the point a deployment gets big enough to care (gotcha 79).
+	//
+	// Sharing one Hasher makes the bound process-wide, and the cost is honest: one instance's
+	// login storm queues another's. Take it. A queue recovers; an OOM kills every tenant in the
+	// process.
+	Hasher *authn.Hasher
 
 	// BypassRole @notice A role for which [Scope] is a no-op and any @auth roles requirement
 	// is satisfied. Empty means none — there is no implicit "admin".
@@ -249,9 +264,19 @@ func New(cfg Config) (*Auth, error) {
 		return nil, errors.New("kal: Config.Mailer is required — a silent no-op means password reset fails at 3am with nothing in any log; use kal.LogMailer{} in development")
 	}
 
-	hasher, err := authn.NewHasher(cfg.Argon2, cfg.MaxConcurrentHashes)
-	if err != nil {
-		return nil, fmt.Errorf("kal: %w", err)
+	// Rejected rather than ignored: a pre-built Hasher already carries its own cost parameters, so
+	// honouring these too would mean a deployment that raises Argon2 cost, observes no change, and
+	// has nothing in any log to explain it. Invariant: nothing here weakens quietly.
+	if cfg.Hasher != nil && (cfg.Argon2 != (authn.Params{}) || cfg.MaxConcurrentHashes != 0) {
+		return nil, errors.New("kal: Config.Hasher is set together with Argon2 or MaxConcurrentHashes — the pre-built hasher already carries both, and silently ignoring a cost parameter is how a deployment ends up hashing at parameters nobody chose")
+	}
+
+	var err error
+	hasher := cfg.Hasher
+	if hasher == nil {
+		if hasher, err = authn.NewHasher(cfg.Argon2, cfg.MaxConcurrentHashes); err != nil {
+			return nil, fmt.Errorf("kal: %w", err)
+		}
 	}
 	sessions, err := session.NewSessions(session.Options{
 		Idle:     cfg.IdleTimeout,
@@ -470,6 +495,9 @@ type LogMailer = authn.LogMailer
 // Params @notice Argon2id cost parameters. See [authn.Params].
 type Params = authn.Params
 
+// Hasher @notice Password hashing with the Argon2 work bounded. See [authn.Hasher].
+type Hasher = authn.Hasher
+
 // SessionInfo @notice One live session, as shown to its owner. See [session.Info].
 type SessionInfo = session.Info
 
@@ -570,6 +598,20 @@ func PresentError(ctx context.Context, err error) *gqlerror.Error {
 
 // ValidatePassword @notice Applies the password policy. See [authn.ValidatePassword].
 func ValidatePassword(password string) error { return authn.ValidatePassword(password) }
+
+// NewHasher @notice Builds a Hasher to share across instances. See [authn.NewHasher].
+//
+// @dev Exported here because [Config.Hasher] is unusable otherwise: a consumer running one
+// instance per tenant schema would have to import authn to build the one value that makes the
+// Argon2 bound process-wide rather than per instance.
+//
+// @param p             cost parameters; zero fields take the OWASP defaults
+// @param maxConcurrent the in-flight hash ceiling; ≤ 0 means GOMAXPROCS
+// @return *Hasher      safe for concurrent use, and for sharing between [New] calls
+// @return error        only a CSPRNG failure
+func NewHasher(p Params, maxConcurrent int64) (*Hasher, error) {
+	return authn.NewHasher(p, maxConcurrent)
+}
 
 // ValidateAuthSecret @notice Applies the client-derived secret's shape. See
 // [e2ee.ValidateAuthSecret].

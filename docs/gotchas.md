@@ -150,7 +150,15 @@ encoded in the stored hash, verification keeps working and the bug survives revi
 
 **29 · Argon2's memory parameter is a DoS primitive.** At `m=19456` every in-flight hash holds 19 MiB,
 so a hundred concurrent login attempts is 1.9 GB and nothing else in the stack bounds it. kal's
-semaphore does; size it against the pod memory limit, and remember the bound is per replica.
+semaphore does; size it against the pod memory limit, and remember the bound is per replica — and,
+until you set `Config.Hasher`, per *instance* as well. Gotcha 79.
+
+**79 · `MaxConcurrentHashes` bounds one `*Auth`, so N instances in one process is N times the
+bound.** Each `New` builds its own `Hasher` with its own semaphore unless `Config.Hasher` is set,
+and zero means GOMAXPROCS *each*. A process holding one instance per tenant schema holds
+N·limit·19 MiB in flight: the parameter that stops concurrent logins from becoming a remote OOM
+stops bounding anything at exactly the scale where it matters. The process ceiling is the sum, not
+the max.
 
 **30 · Equalize timing with a real hash, not a sleep.** A sleep has a different distribution from a
 hash, and an attacker averaging over samples sees the difference. Traefik shipped exactly this bug
