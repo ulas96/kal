@@ -105,6 +105,13 @@ type DirectiveOptions struct {
 // *parent*, which can blank an entire object. Prefer nullable types for conditionally visible
 // fields.
 //
+// proves: [] is not the same as an absent proves:. An all-of over an empty set is vacuously
+// true, so the natural implementation allows while the annotation still reads as a restriction,
+// and a schema-generation step that emits [] for an absent list would widen every field it
+// touched without a word. kal denies instead — for anonymous and authenticated callers alike,
+// before any other check — and there is no way to satisfy it. That is the point: nothing writes
+// an empty list on purpose. Omit the argument to mean "no proof requirement".
+//
 // mfa: true denies until something has stamped auth_sessions.mfa_at, and the window below is
 // measured from it. [session.Sessions.RecordMFA] is that writer and any consumer can reach it,
 // whatever factor it verified first; zkauthn calls it too, so a Groth16 deployment and a TOTP
@@ -128,6 +135,19 @@ func Directive(opts DirectiveOptions) func(ctx context.Context, obj any, next gr
 		if requires != LevelAnonymous && requires != LevelAuthenticated {
 			return nil, &kalerr.Error{Code: kalerr.CodeForbidden, Message: "not permitted",
 				Internal: fmt.Errorf("unknown AuthLevel %q", requires)}
+		}
+
+		// An explicit empty list denies, and it denies here rather than beside the other proof
+		// handling below: the anonymous fast path returns next(ctx) on len(proves) == 0, so a
+		// check placed after it never fires for the one field shape that matters,
+		// @auth(requires: ANONYMOUS, proves: []).
+		//
+		// gqlgen emits a literal nil for an absent argument and a non-nil empty slice for
+		// `proves: []` (gqlgen v0.17.94, codegen/directive.go ResolveArgs and codegen/type.gotpl),
+		// so absent and empty are separable here and nowhere else. Gotcha 82.
+		if proves != nil && len(proves) == 0 {
+			return nil, &kalerr.Error{Code: kalerr.CodeInvalidProof,
+				Message: "zero-knowledge proof required"}
 		}
 
 		p, ok := From(ctx)

@@ -4782,6 +4782,7 @@ cheapest resolution.
 **F-4 · Does `@auth(proves: [])` allow or deny?** — ZK-AUZ-009. Vacuous truth over an empty set means
 the natural implementation allows, and the annotation reads as a restriction. Fail-closed matches
 every other decision in the document; say so in the directive's doc comment.
+**Settled.** An explicit empty list denies; see `authz.Directive`'s doc comment and gotcha 82.
 
 **F-5 · Are leaf indices reused after revocation?** — ZK-TRE-012. §6 revokes by setting a leaf to
 `zeros[0]`, which makes the slot indistinguishable from never-used. Whether the next enrolment lands
@@ -4974,10 +4975,10 @@ register that catches the mutation matrix and one that reports `ok`.
 is an obligation on the implementation, not a report on it. This section records which obligations
 are met and which are outstanding, so the gap is a tracked number rather than an impression.
 
-Of the 147 documented cases: **51 are covered by a named test**,
+Of the 147 documented cases: **54 are covered by a named test**,
 **18 are excused** as unreachable through the exported surface or analytical (the
 `zkNonAutomatedCases` map in `tests/zk_case_manifest_test.go`, each with its reason), and
-**78 remain below**. `TestZKINV003ExternalCaseCoverage` pins all three numbers and fails
+**75 remain below**. `TestZKINV003ExternalCaseCoverage` pins all three numbers and fails
 if any case falls out of all of them, so this list cannot quietly grow or be deleted.
 
 These are not excuses. Nothing here is unreachable — each is work that should be done, in roughly
@@ -4985,13 +4986,12 @@ this order.
 
 ### Critical
 
-31 cases.
+30 cases.
 
 | case | obligation |
 |---|---|
 | `ZK-AUZ-004` | AssertAuthCoverage still demands annotation on zk-gated fields |
 | `ZK-AUZ-005` | The proven-claim set is loaded once per request |
-| `ZK-AUZ-008` | An anonymous principal never satisfies proves: |
 | `ZK-CHL-002` | A re-randomised proof does not replay |
 | `ZK-CHL-003` | The burn is atomic |
 | `ZK-CIR-004` | The adversarial witness generator |
@@ -5023,13 +5023,11 @@ this order.
 
 ### Essential
 
-40 cases.
+38 cases.
 
 | case | obligation |
 |---|---|
-| `ZK-AUZ-006` | Claims do not leak across requests |
 | `ZK-AUZ-007` | An unknown claim denies |
-| `ZK-AUZ-009` | An empty proves: list has a defined meaning |
 | `ZK-AUZ-010` | Claims bind to the session, and that property is stated |
 | `ZK-AUZ-011` | A one-shot claim used as a session claim behaves predictably |
 | `ZK-AUZ-012` | New mutations are in defaultSensitiveFields |

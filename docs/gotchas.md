@@ -129,6 +129,12 @@ role-gated rather than switched by a deploy.
 design — so a caller guessing `nam` still learns there is a `name`. `SetDisableSuggestion(true)` is
 what closes it, and `Configure` sets it.
 
+**82 · An empty directive argument list is not an absent one.** gqlgen emits a literal `nil` for a
+directive argument the annotation omits, and a non-nil empty slice for one written as `[]`. An
+all-of check over the empty set is vacuously true, so `@auth(proves: [])` reads as a restriction and
+allows — and on `requires: ANONYMOUS` it is public. kal denies an explicit empty list before the
+anonymous fast path; omitting the argument is how a field says it needs no proof.
+
 ## Errors
 
 **25 · Never wrap a `*gqlerror.Error` — and know why the rule outlived its bug.** Through luima

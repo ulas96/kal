@@ -51,10 +51,16 @@ will be listed here under **Changed** with the migration in one line.
   evaluated last and won — a hook returning `app.user_id` silently replaced the caller's identity
   for every policy in the transaction, with nothing in any log and every policy still appearing to
   work.
-- `docs/gotchas.md` gains entries 79, 80 and 81.
+- `docs/gotchas.md` gains entries 79, 80, 81 and 82.
 
 ### Changed
 
+- `@auth(proves: [])` now denies. An explicit empty list is unsatisfiable for every caller,
+  anonymous or authenticated, and is refused before the anonymous fast path. An all-of set over
+  nothing is vacuously true, so the previous reading made an annotation that looks like a
+  restriction as permissive as `@auth` with no arguments — and public on an `ANONYMOUS` field. gqlgen
+  passes `nil` for an absent argument and a non-nil empty slice for `[]`, which is what makes the two
+  separable. Migration: omit `proves:` to mean "no proof requirement"; nothing else changes. Gotcha 82.
 - **`Config.ZK` takes pre-loaded verifying keys.** `ZKConfig`'s `KnowledgeVerifyingKey` /
   `KnowledgeVerifyingKeySHA256` / `MembershipVerifyingKey` / `MembershipVerifyingKeySHA256` are
   replaced by `KnowledgeVK` and `MembershipVK`, both `*ZKVerifyingKey`. Migration: call

@@ -45,6 +45,14 @@ type holder struct {
 }
 
 // Middleware @notice Loads recurring claims after session middleware has resolved Principal.
+//
+// @dev The holder is constructed inside the handler, once per request, and never on the Claims
+// value. One map shared between requests hands a grant proven by one caller to the next, and it
+// does so as a race: intermittent, and read as a flake rather than as a bypass. An anonymous
+// request still gets one, empty, rather than none — an empty holder means "nothing has been
+// proven yet", so Proofs refuses it through the ordinary count check rather than through the
+// not-mounted guard, and the refusal therefore does not depend on where this is mounted. db is
+// read only inside the principal branch, which is why Middleware(nil) is a valid anonymous mount.
 func (c *Claims) Middleware(db orm.DB) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -83,6 +91,9 @@ func (c *Claims) Add(ctx context.Context, claim zkauthn.VerifiedClaim) error {
 // @dev No database access occurs here. gqlgen can invoke a directive once per row and execute
 // sibling fields concurrently, so the holder lock checks the complete all-of set before it
 // consumes any one-shot member.
+//
+// An empty claims list returns nil because nothing was asked. @auth(proves: []) never arrives
+// here: [authz.Directive] denies an explicit empty list before it calls this.
 func (c *Claims) Proofs(ctx context.Context, claims []string) error {
 	if len(claims) == 0 {
 		return nil

@@ -44,7 +44,7 @@ var zkNonAutomatedCases = map[string]zkCaseDisposition{
 // zkRoadmapCases are documented obligations with no test yet, each carrying the severity the
 // register assigned it. They are not dispositions: nothing here is unreachable or analytical, and
 // every entry is work that should be done. The bucket exists so the gap is counted rather than
-// silent — deleting this test would make 78 unmet obligations invisible, and a t.Skip would make
+// silent — deleting this test would make 75 unmet obligations invisible, and a t.Skip would make
 // them read green.
 //
 // The count below is pinned deliberately. It can only fall by writing a test and moving an id out
@@ -54,10 +54,7 @@ var zkNonAutomatedCases = map[string]zkCaseDisposition{
 var zkRoadmapCases = map[string]zkCaseDisposition{
 	"ZK-AUZ-004": {"critical", "AssertAuthCoverage still demands annotation on zk-gated fields"},
 	"ZK-AUZ-005": {"critical", "The proven-claim set is loaded once per request"},
-	"ZK-AUZ-006": {"essential", "Claims do not leak across requests"},
 	"ZK-AUZ-007": {"essential", "An unknown claim denies"},
-	"ZK-AUZ-008": {"critical", "An anonymous principal never satisfies proves:"},
-	"ZK-AUZ-009": {"essential", "An empty proves: list has a defined meaning"},
 	"ZK-AUZ-010": {"essential", "Claims bind to the session, and that property is stated"},
 	"ZK-AUZ-011": {"essential", "A one-shot claim used as a session claim behaves predictably"},
 	"ZK-AUZ-012": {"essential", "New mutations are in defaultSensitiveFields"},
@@ -133,7 +130,7 @@ var zkRoadmapCases = map[string]zkCaseDisposition{
 }
 
 // zkRoadmapPinned is the number of documented cases still awaiting a test. Lower it as they land.
-const zkRoadmapPinned = 78
+const zkRoadmapPinned = 75
 
 // The group is [A-Z0-9]+, not [A-Z]+: the E2E group carries a digit, and a letters-only class
 // silently drops all six ZK-E2E cases — four of them CRITICAL — from the register the manifest
