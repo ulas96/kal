@@ -8,6 +8,23 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 While the major version is `0`, the public API may change in a minor release. Every such change
 will be listed here under **Changed** with the migration in one line.
 
+## [Unreleased]
+
+### Changed
+
+- `release.yml` no longer fails the whole run when the GitHub release for a tag already exists.
+  `gh release create` exits 1 on a duplicate, and a release cut by hand before the tag was pushed is
+  not an error — it took down the v0.4.0 run, and with it the proxy warming, for a version that had
+  already shipped correctly.
+- `README.md` carries the measured cost of the 0.5.0 split rather than the claim: 398 packages and
+  8,438,898 bytes down to 258 and 6,965,890, for a program whose entire body is `_ = kal.Config{}`.
+
+### Added
+
+- `CLAUDE.md` is tracked. It holds the invariants — the re-export shim, one `sql.go` per package,
+  tests outside the packages they exercise, the zero `Config` being the production posture — and
+  they are not derivable from the code that obeys them.
+
 ## [0.5.0] - 2026-08-09
 
 ### Changed

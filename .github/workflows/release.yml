@@ -22,8 +22,16 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # The guard is for a release cut by hand before the tag reached the remote: `create` exits 1
+      # on one that already exists, which fails the whole run and skips the proxy warming below
+      # for a version that did in fact ship. `if` is what keeps that check out of `bash -e`.
       - name: create the GitHub release
-        run: gh release create "$GITHUB_REF_NAME" --generate-notes --verify-tag
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "$GITHUB_REF_NAME already has a release; leaving it alone"
+          else
+            gh release create "$GITHUB_REF_NAME" --generate-notes --verify-tag
+          fi
         env:
           GH_TOKEN: ${{ github.token }}
 

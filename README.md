@@ -224,8 +224,13 @@ what `go.mod` requires.
 0.5.0 moved `zkauthn` and `zkauthz` to [`github.com/ulas96/kal-zk`](https://github.com/ulas96/kal-zk),
 which is the only thing that does remove them.
 `go list -deps github.com/ulas96/kal | grep gnark` now returns nothing, and `go list -m all` reports
-zero gnark modules where it used to report four. If you use proofs, add that module and read its
-README for the wiring; if you do not, upgrading makes your `go.sum` shorter and costs you nothing.
+zero gnark modules where it used to report four. Measured rather than predicted: a program whose
+entire body is `_ = kal.Config{}` links 398 packages into 8,438,898 bytes against 0.4.0 and 258
+packages into 6,965,890 against 0.5.0 — 1.4 MiB and 140 packages every consumer used to carry to
+link a feature it may never have called. (darwin/arm64, go1.26, no build flags.)
+
+If you use proofs, add that module and read its README for the wiring; if you do not, upgrading
+makes your `go.sum` shorter and costs you nothing.
 
 ## Deliberately not here
 
