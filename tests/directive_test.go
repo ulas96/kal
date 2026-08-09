@@ -299,3 +299,70 @@ func TestDirectiveSDLParses(t *testing.T) {
 		t.Error("a bare @auth does not default to AUTHENTICATED")
 	}
 }
+
+// TestAuthDirectiveProofs @notice @auth(proves:) fails closed with no proof module wired, and an
+// explicit empty list denies for anonymous and authenticated callers alike.
+//
+// @dev A stub func, deliberately: kal knows nothing about proofs and this asserts the seam, not an
+// implementation. github.com/ulas96/kal-zk carries the other half of this test against its real
+// module — the two together are what make "kal denies without one, kal-zk satisfies it" a checked
+// claim rather than an arrangement nobody verifies.
+//
+// The absent-versus-empty pair is the whole point and a test that checked only one of them cannot
+// tell a decision from a coincidence. `proves: []` is a schema author writing a requirement that no
+// proof can satisfy; gqlgen emits a literal empty slice for it and an absent argument is nil, so
+// the two are distinguishable and must be distinguished (gotcha 82). The anonymous case is last
+// because that is where a check placed after the anonymous fast path silently would not fire.
+//
+// @param t the test handle
+func TestAuthDirectiveProofs(t *testing.T) {
+	ctx := authz.WithPrincipal(context.Background(), &authz.Principal{UserID: "u"})
+	next := func(context.Context) (any, error) { return "ok", nil }
+
+	d := authz.Directive(authz.DirectiveOptions{})
+	if _, err := d(ctx, nil, next, authz.LevelAuthenticated, nil, nil, []string{"member"}); err == nil {
+		t.Fatal("proof requirement passed without an implementation")
+	}
+
+	var got []string
+	d = authz.Directive(authz.DirectiveOptions{Proofs: func(_ context.Context, claims []string) error {
+		got = append(got, claims...)
+		return nil
+	}})
+	if _, err := d(ctx, nil, graphql.Resolver(next), authz.LevelAuthenticated, nil, nil,
+		[]string{"member", "age_over_18"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0] != "member" || got[1] != "age_over_18" {
+		t.Errorf("proof callback got %v", got)
+	}
+
+	ran := false
+	counting := func(context.Context) (any, error) { ran = true; return "ok", nil }
+	d = authz.Directive(authz.DirectiveOptions{})
+
+	if _, err := d(ctx, nil, graphql.Resolver(counting), authz.LevelAuthenticated, nil, nil, nil); err != nil {
+		t.Errorf("an absent proves: added a requirement: %v", err)
+	}
+	if !ran {
+		t.Error("an absent proves: stopped the resolver")
+	}
+
+	ran = false
+	if _, err := d(ctx, nil, graphql.Resolver(counting), authz.LevelAuthenticated, nil, nil,
+		[]string{}); err == nil {
+		t.Error("an explicit empty proves: resolved")
+	}
+	if ran {
+		t.Error("the resolver ran behind an explicit empty proves:")
+	}
+
+	ran = false
+	if _, err := d(context.Background(), nil, graphql.Resolver(counting), authz.LevelAnonymous, nil,
+		nil, []string{}); err == nil {
+		t.Error("an anonymous caller resolved a field with an explicit empty proves:")
+	}
+	if ran {
+		t.Error("the resolver ran for an anonymous caller behind an explicit empty proves:")
+	}
+}

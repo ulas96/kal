@@ -8,6 +8,63 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 While the major version is `0`, the public API may change in a minor release. Every such change
 will be listed here under **Changed** with the migration in one line.
 
+## [Unreleased]
+
+### Changed
+
+- `zkauthn` and `zkauthz` are gone from this module. They now live in
+  [`github.com/ulas96/kal-zk`](https://github.com/ulas96/kal-zk), which requires kal >= 0.5.0. With
+  them go `Config.ZK`, `ZKConfig`, `Auth.ZK` and the forty-seven `ZK*` names the re-export shim
+  carried by hand.
+
+  This is the change `README.md` has been promising since 0.2.0. `consensys/gnark` and
+  `consensys/gnark-crypto` were *direct* requires, so they entered the module graph of every
+  consumer and were recorded in every consumer's `go.sum` whether or not `Config.ZK` was ever set —
+  116 packages and four modules for a feature most deployments do not use. Leaving `Config.ZK` nil
+  turned the feature off at runtime; it did not remove the modules, and no build tag could, because
+  build tags select which files compile and do not change what `go.mod` requires. A separate module
+  is the only thing that does. `go list -deps github.com/ulas96/kal | grep gnark` now returns
+  nothing.
+
+  **Rollout.** If you do not use ZK, upgrade and delete nothing — your `go.sum` gets shorter. If you
+  do, add `github.com/ulas96/kal-zk` and rewire; the full before-and-after is in that module's
+  README. Four things in the move are easy to get wrong. `kal.LoadZKVerifyingKey` becomes
+  `zkauthn.LoadVerifyingKey`. `MFAWindow` and `TableSchema` are now passed to both `kal.Config` and
+  the kal-zk constructors and each pair must agree — kal used to guarantee that, and two MFA windows
+  let a stale elevation replace a second factor while two schemas silently address different tables.
+  `auth.ZK` is gone; hold the service yourself. And `Config.SensitiveFields` **replaces** kal's
+  defaults rather than extending them, so the aliasing guard no longer covers your ZK mutations
+  unless you say
+  `SensitiveFields: append(kal.DefaultSensitiveFields(), zkauthn.SensitiveFields...)`. Without that
+  line, `mutation { a: zkLogin(...) b: zkLogin(...) ... x500 }` is one HTTP request and five hundred
+  proof attempts, and nothing errors.
+
+### Added
+
+- `Config.Proofs func(context.Context, []string) error` — the seam `@auth(proves:)` resolves
+  through, as a plain func so kal carries no dependency on a proof module. Nil denies every non-empty
+  `proves` requirement, which is what an installed schema without its proof module must do.
+- `Config.ExtraMiddleware []func(http.Handler) http.Handler` — middleware mounted inside the session
+  middleware, index 0 outermost, so anything that reads the caller runs after the cookie has resolved
+  into a `Principal`. Outside the `BypassRole` wrapper, which is where the ZK claims middleware sat.
+- `DefaultSensitiveFields()` returns kal's aliasing-guard defaults as a fresh copy, so a deployment
+  can extend the list instead of restating it. `Config.SensitiveFields` still replaces.
+
+### Removed
+
+- `docs/gotchas.md` loses entries 40–63 to kal-zk, which keeps their numbers. The gap stays: nothing
+  in this register is ever renumbered, because the numbers are cited from code and from `tests/`.
+  Entries 81 and 82 stay here — they are about `session` and `authz`, not about proofs.
+- `docs/vulnurability-test-cases.md`, the 147-case ZK register, moves with the tests it reconciles.
+
+### Note
+
+- `migrations/0002_zk.sql` is **retained**, unchanged, and its eight tables stay in
+  `migrations.Tables()`. The tables are not kal's to drop: production databases have applied it and
+  their migration trackers hold a row for it. SQL text carries no Go dependency, so keeping it costs
+  nothing and removes nothing from the graph. kal-zk ships no migrations and reads its schema from
+  kal's `migrations.FS`.
+
 ## [0.4.0] - 2026-08-09
 
 ### Added

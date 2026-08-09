@@ -15,9 +15,9 @@ import (
 
 // identRe @notice What a schema qualifier may look like; same rule as every other package.
 //
-// @dev Duplicated rather than exported, matching session, authz, authn, e2ee, zkauthn and
-// zkauthz. CREATE SCHEMA cannot take a bound parameter, so this is the only thing standing
-// between a caller's string and the DDL.
+// @dev Duplicated rather than exported, matching session, authz, authn and e2ee. CREATE SCHEMA
+// cannot take a bound parameter, so this is the only thing standing between a caller's string and
+// the DDL.
 var identRe = regexp.MustCompile(`^[a-z_][a-z0-9_]*$`)
 
 // migrate @notice Executes every embedded migration in filename order.

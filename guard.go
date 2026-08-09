@@ -32,11 +32,15 @@ const (
 // requests. The same trick against a six-digit code reduces it to a handful of requests, and
 // there is a PortSwigger lab for exactly this. The answer is rejection rather than throttling:
 // no real client sends two logins in one document.
+// This list covers what kal itself resolves. A module bolted on beside kal has mutations kal
+// cannot know the names of, and Config.SensitiveFields *replaces* this list rather than extending
+// it — so a deployment adding its own names silently drops every default. [DefaultSensitiveFields]
+// exists to make appending possible:
+//
+//	SensitiveFields: append(kal.DefaultSensitiveFields(), zkauthn.SensitiveFields...)
 var defaultSensitiveFields = []string{
 	"login", "register", "requestPasswordReset", "resetPassword",
 	"verifyEmail", "acceptInvite", "changePassword",
-	"enrollZKKnowledge", "verifyZKKnowledge", "zkLogin", "proveZKClaim",
-	"issueZKCredential", "revokeZKCredential",
 }
 
 // guard @notice A gqlgen OperationInterceptor that rejects abusive documents before any

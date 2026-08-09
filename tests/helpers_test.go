@@ -14,11 +14,14 @@ package tests
 
 import (
 	"context"
+	"errors"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/go-pg/pg/v10"
 
+	"github.com/ulas96/kal/kalerr"
 	"github.com/ulas96/kal/migrations"
 )
 
@@ -94,4 +97,55 @@ func createUser(t *testing.T, db *pg.DB, email string) string {
 		t.Fatal(err)
 	}
 	return id
+}
+
+// repositoryRoot @notice The module root, for the tests that assert about files rather than code.
+//
+// @dev `tests/` is one level down and `go test` runs each package in its own directory, so the
+// parent of the working directory is the root regardless of where the `go test` invocation was
+// typed. Lives here rather than beside its first caller: a repository-level helper that sits in a
+// feature's test file leaves every other feature's tests one deletion away from not compiling.
+//
+// @param t the test handle
+// @return string an absolute path to the module root
+func repositoryRoot(t *testing.T) string {
+	t.Helper()
+	root, err := filepath.Abs("..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
+
+// readRepositoryFile @notice Reads a file relative to the module root, failing the test if absent.
+//
+// @param t the test handle
+// @param parts path segments below the module root
+// @return string the file's contents
+func readRepositoryFile(t *testing.T, parts ...string) string {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(append([]string{repositoryRoot(t)}, parts...)...))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(raw)
+}
+
+// requireErrorCode @notice Asserts an error carries a specific [kalerr.Error] code.
+//
+// @dev errors.As rather than a type assertion: the contract wraps, and a bare assertion that
+// silently never matches would pass this helper's nil check and then compare a zero Code — the
+// errorlint class of bug that produced luima's finding E-01. Asserting the code rather than the
+// message is what makes these tests survive a reworded string, and what makes them fail when a
+// path starts reporting a different *kind* of refusal.
+//
+// @param t the test handle
+// @param err the error under test
+// @param code the expected kalerr code
+func requireErrorCode(t *testing.T, err error, code string) {
+	t.Helper()
+	var typed *kalerr.Error
+	if err == nil || !errors.As(err, &typed) || typed.Code != code {
+		t.Fatalf("error = %v, want code %s", err, code)
+	}
 }

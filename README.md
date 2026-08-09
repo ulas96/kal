@@ -178,8 +178,6 @@ list — never `*` with credentials.
 | `authz` | `Principal`, `@auth`, `Scope`, `AssertAuthCoverage`, roles, RLS |
 | `session` | tokens, the store, the cookie, the middleware, the JWT leg |
 | `kalerr` | the error contract |
-| `zkauthn` | Groth16/BN254 knowledge and membership proofs, the credential tree, pseudonymous login |
-| `zkauthz` | request-local proven claims behind `@auth(proves:)` |
 | `e2ee` | the client-side encryption vault: per-user KDF parameters and one wrapped key kal cannot open |
 | `migrations` | the schema, as `.sql` behind an `embed.FS` |
 | `tests` | every test, outside the packages it exercises |
@@ -192,9 +190,12 @@ relaxes a security property.
 
 | field | what it is for |
 |---|---|
-| `Audit` | A `func(ctx, kal.Event)` called for the security-relevant things kal sees and a consumer structurally cannot: `login.ok`, `login.fail`, `backoff.open`, `password.rehash`, `mail.fail`, `session.lookup.fail`, `session.revoked`. Synchronous, so a hook that talks to the network must queue internally. Nil discards. Role grants, `e2ee` and `zkauthn` are not in the vocabulary yet. |
+| `Audit` | A `func(ctx, kal.Event)` called for the security-relevant things kal sees and a consumer structurally cannot: `login.ok`, `login.fail`, `backoff.open`, `password.rehash`, `mail.fail`, `session.lookup.fail`, `session.revoked`. Synchronous, so a hook that talks to the network must queue internally. Nil discards. Role grants and `e2ee` are not in the vocabulary yet. |
 | `Hasher` | A pre-built `kal.NewHasher(params, max)` shared between instances. Without it every `New` builds its own Argon2 semaphore, so a process holding one instance per tenant schema holds N × the limit in flight at ~19 MiB each — the bound stops bounding at the scale where it matters. Setting it beside `Argon2` or `MaxConcurrentHashes` is an error, not a silently ignored cost parameter. |
 | `RLSSettings` | `func(ctx) map[string]string` of extra `app.`-prefixed settings carried on `auth.WithRLS`'s transaction, for tenancy that is not a single owner column. `app.user_id` and `app.roles` are refused — they carry the caller. `authz.WithRLSSettings` is the direct form. |
+| `Proofs` | `func(ctx, []string) error` — what `@auth(proves:)` resolves through, as a plain func so kal carries no dependency on a proof module. Nil denies every non-empty `proves` requirement: an installed schema whose proof module was never wired must refuse, not run unguarded. [`kal-zk`](https://github.com/ulas96/kal-zk) supplies one. |
+| `ExtraMiddleware` | `[]func(http.Handler) http.Handler` mounted **inside** the session middleware, index 0 outermost. Inside, not around: anything here that reads the caller runs after the cookie has resolved into a `Principal`, and would see anonymous if it ran first. |
+| `SensitiveFields` | Fields no document may select twice. It **replaces** kal's defaults rather than extending them — `DefaultSensitiveFields()` returns a fresh copy so you can `append` instead of restating the list. A module beside kal has mutations kal cannot know the names of; adding your own without appending silently drops the aliasing guard on `login`. |
 
 A second factor is `auth.Sessions.RecordMFA(ctx, db, sessionID, userID)`: verify whatever factor you
 ship, call it, and `@auth(mfa: true)` passes for `MFAWindow`. It does not rotate the session, and it
@@ -202,29 +203,29 @@ takes no timestamp — `now()` is the database clock.
 
 ### What it costs you to depend on kal
 
-Beyond luima's graph, kal adds **four** direct requires — read `go.mod` for the pinned versions and
+Beyond luima's graph, kal adds **two** direct requires — read `go.mod` for the pinned versions and
 `go.sum` for the full transitive set:
 
 | module | why | who pays |
 |---|---|---|
 | `github.com/golang-jwt/jwt/v5` | the optional JWT leg | everyone |
-| `github.com/consensys/gnark` | the Groth16 circuits and prover/verifier | everyone |
-| `github.com/consensys/gnark-crypto` | BN254 field, pairing and MiMC | everyone |
-| `golang.org/x/sync` | the verification semaphore | everyone |
+| `golang.org/x/sync` | the Argon2 semaphore that bounds concurrent hashing | everyone |
 
 Argon2 costs nothing new — `golang.org/x/crypto` is already there.
 
-**"Who pays: everyone" is literal, and it is the part worth reading twice.** `gnark` and
-`gnark-crypto` are *direct* requires in kal's `go.mod`, so they enter the module graph of every
-consumer and are recorded in every consumer's `go.sum` — whether or not a single line of `zkauthn`
-is imported, and whether or not `Config.ZK` is ever set. Leaving `Config.ZK` nil turns the feature
-off at runtime; it does not remove the modules. Neither would a build tag: build tags select which
-files compile, they do not change what `go.mod` requires. Between them the two modules pull in
-assembly, `unsafe`, and roughly a dozen transitive requires.
+**"Who pays: everyone" is literal, which is why this list is now short.** Until 0.5.0 it also held
+`consensys/gnark` and `consensys/gnark-crypto`. They were *direct* requires, so they entered the
+module graph of every consumer and were recorded in every consumer's `go.sum` — **116 packages and
+four modules** — whether or not a single line of `zkauthn` was imported and whether or not
+`Config.ZK` was ever set. Leaving it nil turned the feature off at runtime; it did not remove the
+modules, and no build tag could, because build tags select which files compile and do not change
+what `go.mod` requires.
 
-If that is not acceptable for your project, the honest answer is not to depend on kal today. Say so
-on the issue tracker — splitting `zkauthn`/`zkauthz` into a separate module is the fix, and it is
-not one a configuration flag can substitute for.
+0.5.0 moved `zkauthn` and `zkauthz` to [`github.com/ulas96/kal-zk`](https://github.com/ulas96/kal-zk),
+which is the only thing that does remove them.
+`go list -deps github.com/ulas96/kal | grep gnark` now returns nothing, and `go list -m all` reports
+zero gnark modules where it used to report four. If you use proofs, add that module and read its
+README for the wiring; if you do not, upgrading makes your `go.sum` shorter and costs you nothing.
 
 ## Deliberately not here
 
@@ -235,30 +236,25 @@ beyond a one-method `Mailer`, avatar storage, a policy DSL, SMS as a second fact
 primary factor, and a pluggable `Store` interface — Postgres is the premise, so that interface would
 have one implementation and would forbid the `JOIN` that is the entire point.
 
+Zero-knowledge proofs are not here either, as of 0.5.0: `zkauthn` and `zkauthz` are
+[`github.com/ulas96/kal-zk`](https://github.com/ulas96/kal-zk).
+
 OAuth/OIDC and TOTP MFA are planned as **separate modules**, not merely separate packages, because a
-separate package in this module would still put its dependencies in every consumer's graph — which
-is exactly what happened with `zkauthn` and `gnark`, and is described honestly above rather than
-repeated here as an aspiration.
+separate package in this module would still put its dependencies in every consumer's graph. That is
+not a prediction: it is what `zkauthn` did with `gnark` for three minor releases, and extracting it
+is what the two `Config` seams above exist for. The next optional subsystem starts outside.
 
-## Operating the ZK module
+## Zero-knowledge proofs
 
-The proving key is a client artifact and kal never loads one: the server holds only verifying keys,
-pinned by SHA-256 in your own source. Packaging and shipping the prover — a JavaScript/WASM bundle,
-a mobile client, a CLI — is your responsibility and your trust boundary. A client that computes
-proofs also holds the member's secret, so a compromised prover bundle is a compromised credential
-for every member who loads it; version and pin it the way you would any other credential-handling
-code.
+Moved out in 0.5.0. `zkauthn` (Groth16/BN254 knowledge and membership proofs, the credential tree,
+pseudonymous login) and `zkauthz` (proven claims behind `@auth(proves:)`) are
+[`github.com/ulas96/kal-zk`](https://github.com/ulas96/kal-zk), which requires kal ≥ 0.5.0 and plugs
+in through `Config.Proofs`, `Config.ExtraMiddleware` and `DefaultSensitiveFields()`. Its README
+carries the wiring, the operating notes and the anonymity qualification.
 
-**Recovery.** A Knowledge secret is returned exactly once and is not recoverable. Re-enrolment is
-the recovery path: `EnrollKnowledge` replaces the commitment after re-verifying the account's
-password, or recent MFA when the account has no password, and revokes every other session when it
-does. An account with neither factor cannot self-serve and needs an operator.
-
-**Revocation.** Disabling an account does not revoke its membership credential. A credential is
-deliberately not joined to the account that received it, so soft-deleting a user leaves their leaf
-live and they can still log in under a fresh pseudonym for any audience they have not used.
-`RevokeCredentialsForUser` is the operation that revokes it, and calling it is a deployment
-decision kal does not make for you.
+kal keeps `migrations/0002_zk.sql` unchanged and its eight tables in `migrations.Tables()` —
+production databases have applied it and their trackers hold a row for it. SQL text carries no Go
+dependency, so keeping the file removes nothing from anyone's module graph.
 
 ## Operating the E2EE module
 

@@ -814,8 +814,19 @@ func TestE2EEDocs(t *testing.T) {
 	})
 
 	// The numbers are cited from code comments and from tests/. Renumbering silently redirects
-	// every citation, so density is asserted separately from the count: a new entry appended as 78
+	// every citation, so density is asserted separately from the count: a new entry appended as 83
 	// is growth and must not fail this case.
+	//
+	// Until 0.5.0 this asserted the sequence had no gaps at all, which was a sound proxy for "nobody
+	// renumbered" only while nothing was ever removed. 40–63 left for github.com/ulas96/kal-zk and
+	// kept their numbers there, so the gap is now the correct state and the assertion is the
+	// narrower one: that gap, and no other.
+	//
+	// Backfilling is what this guards against now. A new entry reusing a number from that range
+	// would collide with kal-zk's, and every citation of it in a code comment would resolve to
+	// whichever register the reader happened to open. New entries take the next number after the
+	// highest, always. (Writing an example citation here would be picked up as a real one by the
+	// subtest below, which is itself the mechanism working.)
 	t.Run("the gotcha register is dense and correctly sectioned", func(t *testing.T) {
 		raw := readRepositoryFile(t, "docs", "gotchas.md")
 		seen := map[int]bool{}
@@ -833,11 +844,18 @@ func TestE2EEDocs(t *testing.T) {
 				max = n
 			}
 		}
-		if len(seen) != max {
-			t.Errorf("%d entries with a maximum of %d — the sequence has a gap, and every citation of a "+
-				"number past it now points somewhere else", len(seen), max)
+		for n := 1; n <= max; n++ {
+			movedToKalZK := n >= 40 && n <= 63
+			switch {
+			case movedToKalZK && seen[n]:
+				t.Errorf("gotcha %d is back in kal's register; 40–63 belong to kal-zk and one number "+
+					"cannot mean two things", n)
+			case !movedToKalZK && !seen[n]:
+				t.Errorf("gotcha %d is missing and was never moved out — entries are never removed "+
+					"and never renumbered", n)
+			}
 		}
-		if max < 77 {
+		if max < 82 {
 			t.Errorf("the register stops at %d; entries are never renumbered and never removed", max)
 		}
 
