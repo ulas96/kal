@@ -10,6 +10,15 @@ will be listed here under **Changed** with the migration in one line.
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-08-10
+
+### Security
+
+- `migrations/0004_zk_hardening.sql` enforces the two legal nullifier row shapes used by
+  `kal-zk`: recurring rows have `user_id` and no `consumed_at`; one-shot rows have `consumed_at`
+  and no `user_id`. Before applying it to an existing database, run the preflight query in the
+  migration and resolve every returned row. `0002_zk.sql` remains byte-for-byte unchanged.
+
 ### Changed
 
 - `release.yml` no longer fails the whole run when the GitHub release for a tag already exists.

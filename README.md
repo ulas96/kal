@@ -253,13 +253,18 @@ is what the two `Config` seams above exist for. The next optional subsystem star
 
 Moved out in 0.5.0. `zkauthn` (Groth16/BN254 knowledge and membership proofs, the credential tree,
 pseudonymous login) and `zkauthz` (proven claims behind `@auth(proves:)`) are
-[`github.com/ulas96/kal-zk`](https://github.com/ulas96/kal-zk), which requires kal ≥ 0.5.0 and plugs
+[`github.com/ulas96/kal-zk`](https://github.com/ulas96/kal-zk), which requires kal ≥ 0.5.1 and plugs
 in through `Config.Proofs`, `Config.ExtraMiddleware` and `DefaultSensitiveFields()`. Its README
 carries the wiring, the operating notes and the anonymity qualification.
 
 kal keeps `migrations/0002_zk.sql` unchanged and its eight tables in `migrations.Tables()` —
 production databases have applied it and their trackers hold a row for it. SQL text carries no Go
 dependency, so keeping the file removes nothing from anyone's module graph.
+
+kal v0.5.1 adds the strictly additive `0004_zk_hardening.sql`. Before applying it to an existing
+proof deployment, run the preflight query in that file and resolve every row it returns. The new
+constraint permits exactly the two protocol shapes: recurring nullifiers have `user_id` only, and
+one-shot nullifiers have `consumed_at` only.
 
 ## Operating the E2EE module
 
