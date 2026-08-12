@@ -7,7 +7,7 @@ require (
 	github.com/go-pg/pg/v10 v10.15.1
 	github.com/gofiber/fiber/v3 v3.4.0
 	github.com/golang-jwt/jwt/v5 v5.3.1
-	github.com/ulas96/luima v0.2.1
+	github.com/ulas96/luima v0.3.0
 	github.com/vektah/gqlparser/v2 v2.5.36
 	golang.org/x/crypto v0.54.0
 	golang.org/x/sync v0.22.0
