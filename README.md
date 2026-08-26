@@ -110,9 +110,23 @@ runs once per row, so a check that costs a query is an N+1 that appears only und
 
 ```go
 func (r *mutationResolver) DeleteDoc(ctx context.Context, id string) (bool, error) {
-    return luima.Delete(ctx, r.DB, &model.Doc{ID: id}, kal.Scope(ctx, "owner_id"))
+    return r.Auth.Delete[model.Doc](ctx, r.DB, "owner_id", &model.Doc{ID: id})
 }
 ```
+
+`Auth.List`, `Get`, `Update` and `Delete` are luima's crud helpers with the predicate already
+folded in — the column is a parameter, so there is no arity that forgets it. They also parenthesise
+your own query options, which the raw form does not: passed as a sibling to `kal.Scope`, a single
+`q.WhereOr` renders `owner_id = $1 or owner_id = $2` and reads another tenant's rows (gotcha 84).
+
+The raw form stays supported, and is the answer when ownership is not one column:
+
+```go
+luima.Delete(ctx, r.DB, &model.Doc{ID: id}, kal.Scope(ctx, "owner_id"))
+```
+
+There is no scoped `Create`: an `INSERT` has no `WHERE`, so set the owning column from
+`kal.Require(ctx)` in the resolver.
 
 A row that exists but is not yours matches nothing, so the delete reports that nothing happened.
 "Not yours" and "does not exist" become indistinguishable, which is the correct answer to give an

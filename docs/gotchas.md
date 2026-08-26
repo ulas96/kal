@@ -74,6 +74,18 @@ not match an index declared `where deleted_at is null`; Postgres rejects the sta
 silently ignoring the clause. The full form is
 `on conflict (lower(email)) where deleted_at is null`.
 
+**84 · A sibling query option can `OR` its way out of `Scope`.** `Scope` returns a
+`func(*orm.Query) *orm.Query` that adds one `WHERE`, and luima's crud applies its options left to
+right onto the same query. go-pg's `WhereOr` appends ` OR `, not ` AND `, and go-pg does not
+parenthesise per option — so
+`luima.List[Doc](ctx, db, kal.Scope(ctx, "owner_id"), func(q *orm.Query) *orm.Query { return
+q.WhereOr("owner_id = ?", other) })` renders `where owner_id = $1 or owner_id = $2` and returns the
+other tenant's rows. Ordering does not save it: the predicate is first and still escaped. Nothing
+errors, and a test that only asserts "alice sees her row" still passes, because she does — alongside
+everyone else's. The fix is a parenthesised group, which is what `Auth.List`, `Get`, `Update` and
+`Delete` do (`owner_id = ? AND (caller clauses)`); reach for the raw `Scope` form only when the
+options you pass hold no `WhereOr`, or group them yourself with `q.WhereGroup`.
+
 ## Schema
 
 **14 · `unique (lower(email), deleted_at)` is backwards.** NULLs are distinct in a unique constraint,
@@ -242,6 +254,17 @@ index is `on conflict (lower(email))`, so uniqueness is enforced under Postgres'
 accept non-ASCII addresses, normalise once at the edge and store the normalised form, so the key is
 a stored value rather than something re-derived from whichever toolchain and collation happen to be
 running.
+
+**85 · The `gofmt` gate is green on a file `gofmt` could not read.** `scoped.go` carries generic
+methods, which the compiler, `go vet`, `go doc` and golangci-lint all accept and which gofmt in Go
+1.27.0 rejects: `scoped.go:91:20: method must have no type parameters`. Those parse errors go to
+*stderr* and gofmt lists nothing on stdout, so `make check`'s `test -z "$(gofmt -l .)"` and CI's
+`unformatted=$(gofmt -l .)` both compare against an empty string and report the tree formatted, while
+`gofmt -w` and `go fmt ./...` leave the file untouched and say nothing either. The gate is not wrong
+about the other files — it never saw this one, and it will not see the next generic-method file
+either. Read the *exit status* instead of the output when you touch one: `gofmt -l . >/dev/null`
+exits 2 here. It is documented rather than fixed because routing stderr into the gate would fail the
+run over code that compiles, tests and lints clean.
 
 ## Client-side encryption
 

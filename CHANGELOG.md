@@ -12,6 +12,21 @@ will be listed here under **Changed** with the migration in one line.
 
 ### Added
 
+- **`Auth.List`, `Auth.Get`, `Auth.Update` and `Auth.Delete`** — luima's crud helpers with `Scope`
+  already folded in, as generic methods (Go 1.27; a method could not carry its own type parameter
+  before). The second of the three authorization layers was the only one enforced by nothing but
+  discipline: `AssertAuthCoverage` walks the schema for a missing `@auth` and Postgres enforces RLS,
+  but `luima.List[T](ctx, db)` with the `Scope` argument left off compiles, passes review and
+  returns every row. Here the owning column is an ordinary parameter, so no arity omits it. The raw
+  `kal.Scope` form is unchanged and stays the answer when ownership is not a single column. There is
+  no scoped `Create` — an `INSERT` has no `WHERE`, and setting the owning column generically needs
+  reflection over `T` that fails silently when the model does not match.
+- `docs/gotchas.md` **84**: a sibling query option can `OR` its way out of `Scope`. go-pg's
+  `WhereOr` appends ` OR ` and go-pg does not parenthesise per option, so
+  `luima.List[Doc](ctx, db, kal.Scope(ctx, "owner_id"), optHoldingAWhereOr)` renders
+  `where owner_id = $1 or owner_id = $2` and returns another tenant's rows, with no error and a test
+  that still passes. The four methods above group the caller's options — `owner_id = ? AND (…)` —
+  which is what makes an option able to narrow the result and unable to widen it.
 - `docs/gotchas.md` **83**: the email lookup key is lowercased twice — by Postgres in
   `where lower(email) = ?` and by Go in the parameter — and the two Unicode tables version
   independently. Go 1.27 moved Go's side from Unicode 15 to 17, which realigns five letters and
@@ -19,6 +34,11 @@ will be listed here under **Changed** with the migration in one line.
   construction: `Login` returns its deliberately indistinguishable message and `Vaults.Params`
   returns the decoy salt, because that path must answer every address to avoid the enumeration
   oracle.
+- `docs/gotchas.md` **85**: the `gofmt` gate is green on a file `gofmt` could not read. gofmt in Go
+  1.27.0 rejects the generic methods in `scoped.go` that the compiler, `go vet`, `go doc` and
+  golangci-lint all accept, and it writes that refusal to stderr while listing nothing on stdout —
+  so `make check`'s gate and the CI step, which both capture stdout, compare against an empty
+  string and report the tree formatted. `make fmt` silently never formats the file either.
 
 ### Changed
 
