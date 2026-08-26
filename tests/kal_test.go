@@ -499,7 +499,7 @@ func TestGuard(t *testing.T) {
 	t.Run("selection count is capped", func(t *testing.T) {
 		var sb strings.Builder
 		sb.WriteString("query { ")
-		for i := 0; i < 120; i++ {
+		for i := range 120 {
 			// Distinct aliases of a non-sensitive field, so this trips the count and not the
 			// duplicate rule.
 			sb.WriteString("f")

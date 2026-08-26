@@ -120,8 +120,7 @@ func (e *Error) As(target any) bool {
 // @param err  the error a resolver returned
 // @return *gqlerror.Error the message the client receives
 func PresentError(ctx context.Context, err error) *gqlerror.Error {
-	var ae *Error
-	if errors.As(err, &ae) {
+	if ae, ok := errors.AsType[*Error](err); ok {
 		return &gqlerror.Error{
 			Message:    ae.Message,
 			Path:       graphql.GetPath(ctx),

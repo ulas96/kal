@@ -9,6 +9,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -118,16 +119,12 @@ func TestE2EEImportGraph(t *testing.T) {
 	// a swap of one import for another.
 	t.Run("the gate is the import list, not the allowlist length", func(t *testing.T) {
 		wider := map[string]bool{"crypto/aes": true}
-		for k, v := range e2eeAllowedImports {
-			wider[k] = v
-		}
+		maps.Copy(wider, e2eeAllowedImports)
 		if got := unlistedImports(direct, wider); len(got) != 0 {
 			t.Errorf("an allowlist entry for an unimported package changed the verdict: %v", got)
 		}
 		narrower := map[string]bool{}
-		for k, v := range e2eeAllowedImports {
-			narrower[k] = v
-		}
+		maps.Copy(narrower, e2eeAllowedImports)
 		delete(narrower, "crypto/hmac")
 		if got := unlistedImports(direct, narrower); len(got) != 1 || got[0] != "crypto/hmac" {
 			t.Errorf("removing an allowlist entry for an imported package reported %v, want [crypto/hmac] — "+
@@ -227,9 +224,9 @@ func TestE2EEExportedSurface(t *testing.T) {
 
 	t.Run("*Vaults offers exactly four methods", func(t *testing.T) {
 		var got []string
-		typ := reflect.TypeOf(&e2ee.Vaults{})
-		for i := 0; i < typ.NumMethod(); i++ {
-			got = append(got, typ.Method(i).Name)
+		typ := reflect.TypeFor[*e2ee.Vaults]()
+		for method := range typ.Methods() {
+			got = append(got, method.Name)
 		}
 		sort.Strings(got)
 		want := []string{"Discard", "Get", "Params", "Put"}
@@ -336,9 +333,8 @@ func TestE2EENewVaults(t *testing.T) {
 	// is a bare errors.New three lines above a *kalerr.Error for the schema. Pinned as it is, so a
 	// case written from the handout does not assert the wrong thing and get "fixed" by weakening it.
 	t.Run("the two rejection branches do not carry the same error type", func(t *testing.T) {
-		var typed *kalerr.Error
 		_, pepperErr := e2ee.NewVaults(e2ee.Options{})
-		if errors.As(pepperErr, &typed) {
+		if typed, ok := errors.AsType[*kalerr.Error](pepperErr); ok {
 			t.Errorf("the pepper branch now carries %s — today it is a bare errors.New (§17.10); if "+
 				"this was deliberate, move the finding, do not delete the case", typed.Code)
 		}
@@ -517,7 +513,7 @@ func TestValidateAuthSecret(t *testing.T) {
 	// route forward — so the documented derivation is run end to end, repeatedly, with the alphabet
 	// exercised by randomness rather than by a fixture that happens to avoid it.
 	t.Run("a secret from the documented derivation is always accepted", func(t *testing.T) {
-		for i := 0; i < 100; i++ {
+		for i := range 100 {
 			secret, _ := randomAuthSecret(t)
 			if err := kal.ValidateAuthSecret(secret); err != nil {
 				t.Fatalf("draw %d: %q rejected: %v", i, secret, err)
@@ -543,7 +539,7 @@ func TestE2EERecoveryCodeShape(t *testing.T) {
 	seen := map[string]bool{}
 	histogram := [256]int{}
 	total := 0
-	for i := 0; i < draws; i++ {
+	for range draws {
 		code, err := kal.NewRecoveryCode()
 		if err != nil {
 			t.Fatal(err)
@@ -735,7 +731,7 @@ func TestE2EEMigrationOnlyAdds(t *testing.T) {
 // deleted as broken within a week.
 func normalizeProse(s string) string {
 	var b strings.Builder
-	for _, line := range strings.Split(s, "\n") {
+	for line := range strings.SplitSeq(s, "\n") {
 		b.WriteString(strings.TrimPrefix(strings.TrimSpace(line), "//"))
 		b.WriteString(" ")
 	}

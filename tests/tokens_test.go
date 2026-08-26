@@ -316,7 +316,7 @@ func TestDBTokenSingleUseUnderConcurrency(t *testing.T) {
 	var wg sync.WaitGroup
 	start := make(chan struct{})
 	errs := make([]error, attempts)
-	for i := 0; i < attempts; i++ {
+	for i := range attempts {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()

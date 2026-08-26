@@ -223,6 +223,26 @@ assets, and ideally exchange the token immediately and `history.replaceState` th
 auth library that silence would cover session revocation, token single-use and the unique index. CI
 greps `--- PASS: TestDB` out of the `-v` output for exactly this reason.
 
+**83 · The email lookup key is lowercased twice, by two Unicode tables that version
+independently.** Every address-keyed statement is `where lower(email) = ?`: Postgres lowers the
+column with the collation's tables, Go lowers the parameter with its own
+(`strings.ToLower(strings.TrimSpace(email))` in `authn`'s `Login`, `Register`,
+`RequestPasswordReset` and `Invite`, and in `e2ee.Vaults`' `Params` and `Put`). A row is found
+only where the two agree, and either side moves on its own schedule — a Go upgrade, or a
+Postgres/ICU/glibc upgrade. Go 1.27 moved Go's side from Unicode 15 to 17, which gave 55 runes a
+lowercase mapping they did not have before; no existing mapping changed.
+Measured against Postgres 16.14 on `en_US.utf8` with the libc provider, that upgrade *aligns* five
+letters Go previously left alone while Postgres folded them (U+A7CB `Ɤ`, U+A7CC `Ꟍ`, U+A7DA `Ꟛ`,
+U+A7DC `Ƛ`, U+1C89 `Ᲊ`) and *newly diverges* three where Go now leads glibc (U+A7CE, U+A7D2,
+U+A7D4). On a diverging address nothing errors: `Login` returns the deliberately
+indistinguishable INVALID_CREDENTIALS, and `Vaults.Params` takes its `pg.ErrNoRows` branch and hands
+back the *decoy* salt — the one path that must answer every address to avoid the enumeration oracle,
+so it structurally cannot report a miss and the client derives a key that opens nothing. The unique
+index is `on conflict (lower(email))`, so uniqueness is enforced under Postgres's table alone. If you
+accept non-ASCII addresses, normalise once at the edge and store the normalised form, so the key is
+a stored value rather than something re-derived from whichever toolchain and collation happen to be
+running.
+
 ## Client-side encryption
 
 **64 · The server that serves the JavaScript can serve JavaScript that exfiltrates the key.**

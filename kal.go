@@ -59,6 +59,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"time"
 
 	"github.com/99designs/gqlgen/graphql"
@@ -363,8 +364,8 @@ func (a *Auth) Middleware() func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		// Reversed, so index 0 ends up outermost: each iteration wraps what the previous one
 		// produced, and the last thing wrapped is the first thing entered.
-		for i := len(a.cfg.ExtraMiddleware) - 1; i >= 0; i-- {
-			next = a.cfg.ExtraMiddleware[i](next)
+		for _, v := range slices.Backward(a.cfg.ExtraMiddleware) {
+			next = v(next)
 		}
 		if a.cfg.BypassRole != "" {
 			inner := next

@@ -422,8 +422,7 @@ func TestDBLoginBackoff(t *testing.T) {
 		return f.lastErr
 	}
 	codeOf := func(err error) string {
-		var ae *kalerr.Error
-		if errors.As(err, &ae) {
+		if ae, ok := errors.AsType[*kalerr.Error](err); ok {
 			return ae.Code
 		}
 		return ""
@@ -484,7 +483,7 @@ func TestDBLoginBackoff(t *testing.T) {
 
 	t.Run("a successful login after a streak notifies the owner", func(t *testing.T) {
 		f.mailer.take()
-		for i := 0; i < 3; i++ {
+		for range 3 {
 			_ = fail("203.0.113.20")
 			if _, err := f.db.Exec(`update auth_login_attempts set last_fail = now() - interval '1 hour'`); err != nil {
 				t.Fatal(err)
@@ -506,7 +505,7 @@ func TestDBLoginBackoff(t *testing.T) {
 	// counter stays at one — the per-IP counter is the only thing that sees the attack.
 	t.Run("per-IP counting catches spraying", func(t *testing.T) {
 		const attacker = "203.0.113.99"
-		for i := 0; i < 12; i++ {
+		for i := range 12 {
 			victim := "victim" + string(rune('a'+i)) + "@example.com"
 			f.createPasswordUser(t, victim, "a password worth using")
 			f.request(t, "", attacker, func(ctx context.Context) error {

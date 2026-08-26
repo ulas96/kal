@@ -10,6 +10,36 @@ will be listed here under **Changed** with the migration in one line.
 
 ## [Unreleased]
 
+### Added
+
+- `docs/gotchas.md` **83**: the email lookup key is lowercased twice — by Postgres in
+  `where lower(email) = ?` and by Go in the parameter — and the two Unicode tables version
+  independently. Go 1.27 moved Go's side from Unicode 15 to 17, which realigns five letters and
+  newly diverges three against a stock `en_US.utf8` Postgres 16. The failure is silent by
+  construction: `Login` returns its deliberately indistinguishable message and `Vaults.Params`
+  returns the decoy salt, because that path must answer every address to avoid the enumeration
+  oracle.
+
+### Changed
+
+- **The Go floor is now 1.27.0**, up from 1.25.7. kal is an embedded library, so the `go` directive
+  in its `go.mod` is not advice: every consumer that requires kal is pulled onto Go 1.27 by the
+  module graph, whatever their own `go` line says. There is no build tag or config field that opts
+  out of this one — take the upgrade when your own toolchain can move. Nothing in the exported
+  surface changed, so the migration is the toolchain and nothing else: no import moved, no signature
+  changed, and `go.sum` is byte-for-byte identical because no dependency version moved with it.
+- CI now tests `['1.27']` alone rather than `['1.25', '1.26']`. The usual one release of slack is
+  not available here: the floor *is* the current release, and 1.25 and 1.26 cannot compile a module
+  that declares `go 1.27.0`, so leaving them in the matrix would be a guaranteed red run rather than
+  coverage.
+- The `go fix` modernizers were applied across the module — `errors.AsType` where the result is used
+  in the success branch, `slices.Backward`, `slices.Contains`, `maps.Copy`, `strings.SplitSeq`,
+  `reflect.TypeFor`, `Type.Methods` and `for range n`. Behaviour is unchanged everywhere; the point
+  is that each one removes a hand-rolled loop or a two-line declare-then-check. The `stringsbuilder`
+  modernizer was deliberately not applied to `authz/rls.go`: it rewrites the `set_config` statement
+  assembly into a `strings.Builder`, which adds a line and takes the SQL text out of a single
+  greppable literal for a loop that runs once per configured RLS setting.
+
 ## [0.5.1] - 2026-08-10
 
 ### Security

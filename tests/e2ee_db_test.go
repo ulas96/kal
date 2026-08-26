@@ -744,7 +744,7 @@ func TestDBE2EEParamsIsPreAuth(t *testing.T) {
 	})
 
 	before := tableCounts(t, f.db)
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		if _, err := v.Params(ctx, f.db, fmt.Sprintf("unknown-%d@example.test", i)); err != nil {
 			t.Fatal(err)
 		}
@@ -890,7 +890,7 @@ func TestDBE2EEParamsNoBackoff(t *testing.T) {
 
 	// Comfortably above the threshold: three consecutive failures already open the window
 	// (TestDBLoginBackoff pins the curve).
-	for i := 0; i < 50; i++ {
+	for range 50 {
 		if _, err := v.Params(ctx, f.db, addr); err != nil {
 			t.Fatal(err)
 		}
@@ -914,7 +914,7 @@ func TestDBE2EEParamsNoBackoff(t *testing.T) {
 	// all, which asserts nothing about Params.
 	t.Run("real failures still count", func(t *testing.T) {
 		var last error
-		for i := 0; i < 3; i++ {
+		for range 3 {
 			f.request(t, "", "192.0.2.71", func(reqCtx context.Context) error {
 				_, err := f.accounts.Login(reqCtx, f.db, addr, "not the password")
 				return err
@@ -1143,7 +1143,7 @@ func TestDBE2EEParamsConcurrent(t *testing.T) {
 		start := make(chan struct{})
 		got := make([]e2ee.Params, attempts)
 		errs := make([]error, attempts)
-		for i := 0; i < attempts; i++ {
+		for i := range attempts {
 			wg.Add(1)
 			go func(i int) {
 				defer wg.Done()
@@ -1542,7 +1542,7 @@ func TestDBE2EEPutConcurrency(t *testing.T) {
 	start := make(chan struct{})
 	errs := make([]error, attempts)
 	keys := make([][]byte, attempts)
-	for i := 0; i < attempts; i++ {
+	for i := range attempts {
 		// Distinguishable blobs: the same value in every goroutine makes the stored-key assertion
 		// below vacuous.
 		keys[i] = []byte(fmt.Sprintf("the re-wrap from device %d", i))
@@ -2538,8 +2538,7 @@ func TestDBE2EEMemoryHasNoCeiling(t *testing.T) {
 		if err == nil {
 			t.Fatal("3 GiB of Argon2 memory was accepted and stored")
 		}
-		var ae *kalerr.Error
-		if errors.As(err, &ae) {
+		if ae, ok := errors.AsType[*kalerr.Error](err); ok {
 			t.Errorf("error = %s, and today this is a raw driver error (§17.12) — if check grew a "+
 				"ceiling, move the finding rather than deleting the case", ae.Code)
 		}
@@ -2910,7 +2909,7 @@ func TestDBE2EEStaleComputedAtWriteTime(t *testing.T) {
 			"hash at write time")
 	}
 
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		email := fmt.Sprintf("writetime-%d@example.test", i)
 		id := f.createPasswordUser(t, email, "the original password")
 		uctx := vaultCtx(id, email)
@@ -3637,7 +3636,7 @@ func TestDBE2EERecoveryCodeWritesNothing(t *testing.T) {
 	f, v := newVaultFixture(t)
 	before := tableCounts(t, f.db)
 
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		if _, err := kal.NewRecoveryCode(); err != nil {
 			t.Fatal(err)
 		}

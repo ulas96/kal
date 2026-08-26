@@ -114,7 +114,7 @@ func TestCookieJarFlushOnce(t *testing.T) {
 	}
 	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var wg sync.WaitGroup
-		for i := 0; i < 8; i++ {
+		for i := range 8 {
 			wg.Add(1)
 			go func(i int) {
 				defer wg.Done()

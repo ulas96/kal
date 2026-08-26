@@ -70,7 +70,7 @@ not that a function returned false.
 *development* config. There is no `Dev` bool and no environment flag that relaxes a security property;
 anything a developer needs is an ordinary named field (`kal.LogMailer{}`, `AllowIntrospection`).
 
-**`docs/gotchas.md` is a register of 58 silent failures** — transport, RLS, schema, gqlgen, errors,
+**`docs/gotchas.md` is a register of 59 silent failures** — transport, RLS, schema, gqlgen, errors,
 crypto, client-side encryption. Entries 40–63 are absent on purpose: they went to
 `github.com/ulas96/kal-zk` with `zkauthn`/`zkauthz` and keep those numbers there. Read the relevant
 section before touching those areas; each entry is there because the failure produces no error, no

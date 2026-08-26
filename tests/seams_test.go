@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"testing"
 
 	"github.com/99designs/gqlgen/graphql"
@@ -84,13 +85,7 @@ func TestDefaultSensitiveFields(t *testing.T) {
 		t.Fatal("DefaultSensitiveFields is empty")
 	}
 	for _, want := range []string{"login", "register", "changePassword"} {
-		found := false
-		for _, f := range first {
-			if f == want {
-				found = true
-				break
-			}
-		}
+		found := slices.Contains(first, want)
 		if !found {
 			t.Errorf("the defaults do not protect %q", want)
 		}

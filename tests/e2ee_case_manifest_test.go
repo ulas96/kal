@@ -75,7 +75,7 @@ func documentedE2EECases(t *testing.T) map[string]bool {
 		t.Fatal(err)
 	}
 	out := make(map[string]bool)
-	for _, line := range strings.Split(string(raw), "\n") {
+	for line := range strings.SplitSeq(string(raw), "\n") {
 		match := e2eeCaseHeadingRE.FindStringSubmatch(line)
 		if match == nil {
 			continue
